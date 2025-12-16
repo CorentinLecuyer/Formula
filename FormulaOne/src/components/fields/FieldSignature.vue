@@ -30,9 +30,7 @@ const clear = () => {
 
 <template>
   <div class="flex flex-col gap-1">
-    <label class="text-sm font-medium text-gray-700">
-      {{ field.label }} <span v-if="field.required" class="text-red-500">*</span>
-    </label>
+
     
     <div class="border border-gray-300 rounded-md overflow-hidden bg-white">
       <VueSignaturePad

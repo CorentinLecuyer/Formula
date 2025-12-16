@@ -1,25 +1,25 @@
 <script setup>
-import { ref, watch } from 'vue'
+import { ref } from 'vue'
 import { supabase } from '../../supabase'
 
 const props = defineProps({
   field: { type: Object, required: true },
-  modelValue: [String, Object] // Can be the ID or null
+  modelValue: [Object, null], // Expecting an object { name, id, sap_id }
 })
 
 const emit = defineEmits(['update:modelValue'])
 
 const searchQuery = ref('')
 const results = ref([])
-const isSearching = ref(false)
-const selectedLabel = ref('')
+const showResults = ref(false)
 
-// 1. Search Logic
+// Safe defaults using optional chaining
+const selectedPocName = ref(props.modelValue?.name || '')
+const selectedSapId = ref(props.modelValue?.sap_id || '')
+
 const searchPocs = async () => {
   if (searchQuery.value.length < 2) return
-  
-  isSearching.value = true
-  // Query your existing 'pocs' table
+
   const { data, error } = await supabase
     .from('pocs')
     .select('id, Name, ABI_SFA_City__c, ABI_SFA_SAPID__c')
@@ -27,66 +27,79 @@ const searchPocs = async () => {
     .limit(200)
 
   if (!error) {
-    results.value = data
+    results.value = data || []
+    showResults.value = true
   }
-  isSearching.value = false
 }
 
-// 2. Select Logic
 const selectPoc = (poc) => {
-  // Format how it looks in the box
-  selectedLabel.value = `${poc.Name} (${poc.ABI_SFA_City__c})`
-  searchQuery.value = '' // Clear search
-  results.value = [] // Hide dropdown
-  
-  // Send the ID back to the form
-  emit('update:modelValue', poc.id)
+  selectedPocName.value = poc.Name
+  selectedSapId.value = poc.ABI_SFA_SAPID__c
+
+  // Reset UI
+  searchQuery.value = ''
+  showResults.value = false
+
+  emit('update:modelValue', {
+    name: poc.Name,
+    id: poc.id,
+    sap_id: poc.ABI_SFA_SAPID__c,
+  })
 }
 
-// 3. Clear Logic
 const clearSelection = () => {
-  selectedLabel.value = ''
+  selectedPocName.value = ''
+  selectedSapId.value = ''
   emit('update:modelValue', null)
 }
 </script>
 
 <template>
-  <div class="flex flex-col gap-1 relative">
-    <label class="text-sm font-medium text-gray-700">
-      {{ field.label }} <span v-if="field.required" class="text-red-500">*</span>
-    </label>
+  <div class="space-y-2">
+    <div class="relative">
 
-    <div v-if="!modelValue">
+
       <input
-        type="text"
         v-model="searchQuery"
         @input="searchPocs"
-        placeholder="Type to search POCs..."
+        type="text"
+        placeholder="Type to search POC..."
         class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-2 focus:ring-black"
       />
-      
-      <ul v-if="results.length > 0" class="absolute z-10 w-full bg-white border border-gray-200 mt-1 rounded-md shadow-lg max-h-60 overflow-y-auto">
-        <li 
-          v-for="poc in results" 
+
+      <ul
+        v-if="showResults && results.length"
+        class="absolute z-50 bg-white border mt-1 w-full shadow-lg rounded max-h-60 overflow-auto"
+      >
+        <li
+          v-for="poc in results"
           :key="poc.id"
           @click="selectPoc(poc)"
-          class="px-3 py-2 hover:bg-gray-100 cursor-pointer text-sm border-b border-gray-50 last:border-0"
+          class="px-3 py-2 hover:bg-gray-100 cursor-pointer text-sm border-b last:border-0"
         >
           <span class="font-bold">{{ poc.Name }}</span>
-          <br/>
-          <span class="text-xs text-gray-500">{{ poc.ABI_SFA_City__c }} // {{ poc.ABI_SFA_SAPID__c }}</span>
+          <span class="text-xs text-gray-500 block">{{ poc.ABI_SFA_City__c }}</span>
         </li>
       </ul>
-      <div v-else-if="searchQuery.length > 2 && !isSearching" class="text-sm text-gray-500 mt-1">
-        No results found.
-      </div>
     </div>
 
-    <div v-else class="flex items-center justify-between p-3 bg-blue-50 border border-blue-200 rounded-md">
-      <span class="font-medium text-blue-900">{{ selectedLabel || 'POC Selected (ID: ' + modelValue + ')' }}</span>
-      <button @click="clearSelection" class="text-blue-500 hover:text-blue-700 font-bold px-2">
-        ✕
-      </button>
+    <div class="flex gap-4 p-3 bg-gray-50 rounded border border-gray-200">
+      <div class="flex-1">
+        <label class="text-[10px] text-gray-400 uppercase">Selected POC</label>
+        <div class="font-bold text-gray-800">{{ selectedPocName || '-' }}</div>
+      </div>
+      <div class="w-1/3 border-l pl-4 border-gray-200 relative">
+        <label class="text-[10px] text-gray-400 uppercase">Ship To #</label>
+        <div class="font-bold text-gray-500">{{ selectedSapId || '-' }}</div>
+
+        <button
+          v-if="selectedPocName"
+          @click="clearSelection"
+          class="absolute top-0 right-0 text-red-400 hover:text-red-600 font-bold px-1"
+        >
+          ✕
+        </button>
+      </div>
     </div>
   </div>
 </template>

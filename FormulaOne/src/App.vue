@@ -1,56 +1,22 @@
 <script setup>
-import { ref } from 'vue'
-import FormRenderer from './components/FormRenderer.vue'
-
-// 1. The Schema (Usually comes from Database, hardcoded for now)
-const testSchema = ref([
-  {
-    id: "poc_name",
-    type: "text",
-    label: "POC Name",
-    placeholder: "Enter the bar name...",
-    required: true
-  },
-  {
-    id: "machines_sold",
-    type: "number", // We are reusing the text input for now, but we can add type="number" later
-    label: "Machines Sold",
-    required: true
-  },
-  {
-    id: "final_poc",
-    type: "poc_select", // <--- This triggers your new component
-    label: "Search for a Point of Sale",
-    required: true
-  },
-  {
-    id: "manager_sign",
-    type: "signature",
-    label: "Manager Validation",
-    required: true
-  }
-])
-
-// 2. The Data (Starts empty)
-const formData = ref({})
+import { RouterLink, RouterView } from 'vue-router'
 </script>
 
 <template>
-  <div class="max-w-2xl mx-auto p-10">
-    <h1 class="text-3xl font-bold mb-8">Form Builder Test</h1>
+  <div class="min-h-screen bg-gray-50 font-sans text-gray-900">
+    <nav class="bg-black text-white p-4 shadow-md">
+      <div class="max-w-6xl mx-auto flex justify-between items-center">
+        <div class="font-bold text-xl tracking-tight">
+          <span class="text-yellow-500">Perfect</span>Draft Sales
+        </div>
+        <div class="space-x-6">
+          <RouterLink to="/" class="hover:text-yellow-400 transition">All forms</RouterLink>
+          <RouterLink to="/create" class="hover:text-yellow-400 transition">+ Build New</RouterLink> 
+          <RouterLink to="/summary" class="hover:text-yellow-400 transition">Dashboard</RouterLink>
+        </div>
+      </div>
+    </nav>
 
-    <div class="bg-white shadow-lg rounded-xl p-6 border border-gray-100">
-      
-      <FormRenderer 
-        :schema="testSchema" 
-        v-model="formData" 
-      />
-
-    </div>
-
-    <div class="mt-10 p-4 bg-gray-900 text-green-400 rounded-lg font-mono text-sm">
-      <h3 class="text-white font-bold mb-2 uppercase">Live Data Store:</h3>
-      <pre>{{ formData }}</pre>
-    </div>
+    <RouterView />
   </div>
 </template>

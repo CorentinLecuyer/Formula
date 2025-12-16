@@ -18,21 +18,43 @@ const emit = defineEmits(['update:modelValue'])
 
 // When a single field changes, we update the whole form data object
 const handleFieldUpdate = (fieldId, newValue) => {
-  // 1. Create a copy of the existing data
   const newFormData = { ...props.modelValue }
-  
-  // 2. Update the specific field
-  newFormData[fieldId] = newValue
-  
-  // 3. Send the updated object back up to the parent
+
+  // CHECK: Is this a "Smart Object" from our custom components?
+  if (typeof newValue === 'object' && newValue !== null) {
+    
+    // CASE 1: DEPOT
+    if (newValue.name && newValue.number) {
+      newFormData[fieldId] = newValue.name                 // Main Field: "Paris"
+      newFormData[fieldId + '_ship_to_number'] = newValue.number // Partner Field: "001"
+    }
+    // CASE 2: POC
+    else if (newValue.sap_id) {
+      newFormData[fieldId] = newValue.name
+      newFormData[fieldId + '_sap_id'] = newValue.sap_id
+    }
+    // CASE 3: T1 USER
+    else if (newValue.t1) {
+      newFormData[fieldId] = newValue.t1
+      newFormData[fieldId + '_manager_name'] = newValue.t2
+    }
+    // FALLBACK
+    else {
+      newFormData[fieldId] = newValue
+    }
+
+  } else {
+    // Standard Text/Number
+    newFormData[fieldId] = newValue
+  }
+
   emit('update:modelValue', newFormData)
 }
 </script>
 
 <template>
   <div class="space-y-6">
-    <div v-for="field in schema" :key="field.id">
-      
+    <div v-for="field in schema" :key="field.id" v-show="!field.is_partner">
       <DynamicField
         :field="field"
         :model-value="modelValue[field.id]"
