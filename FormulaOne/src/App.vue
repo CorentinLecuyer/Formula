@@ -13,7 +13,6 @@ import { RouterLink, RouterView } from 'vue-router'
 
         <div class="space-x-6">
           <RouterLink to="/" class="hover:text-yellow-400 transition">All forms</RouterLink>
-          <RouterLink to="/create" class="hover:text-yellow-400 transition">+ Build New</RouterLink> 
           <RouterLink to="/summary" class="hover:text-yellow-400 transition">Dashboard</RouterLink>
         </div>
       </div>
