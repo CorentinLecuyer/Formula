@@ -2,16 +2,15 @@
 import DynamicField from './DynamicField.vue'
 
 const props = defineProps({
-  // The blueprint (Array of field definitions)
-  schema: { 
-    type: Array, 
-    required: true 
+  schema: {
+    type: Array,
+    required: true,
   },
-  // The actual answers (Object like { "f_1": "John", "f_2": 50 })
-  modelValue: { 
-    type: Object, 
-    required: true 
-  }
+
+  modelValue: {
+    type: Object,
+    required: true,
+  },
 })
 
 const emit = defineEmits(['update:modelValue'])
@@ -22,10 +21,9 @@ const handleFieldUpdate = (fieldId, newValue) => {
 
   // CHECK: Is this a "Smart Object" from our custom components?
   if (typeof newValue === 'object' && newValue !== null) {
-    
     // CASE 1: DEPOT
     if (newValue.name && newValue.number) {
-      newFormData[fieldId] = newValue.name                 // Main Field: "Paris"
+      newFormData[fieldId] = newValue.name // Main Field: "Paris"
       newFormData[fieldId + '_ship_to_number'] = newValue.number // Partner Field: "001"
     }
     // CASE 2: POC
@@ -42,7 +40,6 @@ const handleFieldUpdate = (fieldId, newValue) => {
     else {
       newFormData[fieldId] = newValue
     }
-
   } else {
     // Standard Text/Number
     newFormData[fieldId] = newValue
@@ -53,6 +50,12 @@ const handleFieldUpdate = (fieldId, newValue) => {
 </script>
 
 <template>
+
+  <div class="relative flex justify-center">
+    <span class="bg-white px-3 text-xl font-semibold text-gray-800 uppercase tracking-widest border-amber-300 border-b-2">
+      Start Form
+    </span>
+  </div>
   <div class="space-y-6">
     <div v-for="field in schema" :key="field.id" v-show="!field.is_partner">
       <DynamicField
@@ -60,9 +63,8 @@ const handleFieldUpdate = (fieldId, newValue) => {
         :model-value="modelValue[field.id]"
         @update:model-value="(val) => handleFieldUpdate(field.id, val)"
       />
-      
     </div>
-    
+
     <div v-if="schema.length === 0" class="text-gray-500 italic text-center">
       No fields defined in this form.
     </div>

@@ -1,10 +1,10 @@
 <script setup>
-import { defineProps, defineEmits } from 'vue'
 // Import your custom field components
 import FieldPocSelect from '@/components/fields/FieldPocSelect.vue'
 import FieldSignature from '@/components/fields/FieldSignature.vue'
 import FieldT1Select from '@/components/fields/FieldT1Select.vue'
 import FieldDepotSelect from '@/components/fields/FieldDepotSelect.vue'
+import FieldAttachment from './FieldAttachment.vue'
 
 const props = defineProps({
   field: {
@@ -87,6 +87,13 @@ const emit = defineEmits(['update:modelValue'])
       v-else-if="field.type === 't1_select'"
       :modelValue="modelValue"
       :field="field"
+      @update:modelValue="$emit('update:modelValue', $event)"
+    />
+
+    <FieldAttachment
+      v-else-if="field.type === 'file'"
+      :field="field"
+      :modelValue="modelValue"
       @update:modelValue="$emit('update:modelValue', $event)"
     />
 

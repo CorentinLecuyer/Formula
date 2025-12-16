@@ -12,7 +12,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="max-w-4xl mx-auto p-8">
+  <div class="max-w-7xl mx-auto p-8">
     <div class="flex justify-between items-center mb-6">
       <h1 class="text-3xl font-bold">My Forms</h1>
       <RouterLink to="/create" class="bg-black text-white px-4 py-2 rounded font-bold hover:bg-gray-800">

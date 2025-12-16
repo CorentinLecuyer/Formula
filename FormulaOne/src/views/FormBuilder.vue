@@ -1,94 +1,133 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
-import FormRenderer from '../components/FormRenderer.vue'
 import { supabase } from '../supabase'
+import FormRenderer from '../components/FormRenderer.vue'
+import FormPresentation from '../components/FormPresentation.vue'
 
 const route = useRoute()
+const slugFromUrl = route.params.slug
 
-// State
-const currentSchema = ref([])
-const formTitle = ref('Loading...')
-const formId = ref(null)
+const formTitle = ref('')
+const formSchema = ref([])
 const formData = ref({})
-const isSubmitting = ref(false)
-const loading = ref(true)
+const formId = ref(null)
+const formDescription = ref('')
+const formInfoBlocks = ref([])
 
-// 1. Fetch the Form Blueprint
+const loading = ref(true)
+const submitting = ref(false)
+const submitted = ref(false)
+
 const fetchForm = async () => {
   loading.value = true
-
-  // 3. Get the slug from the URL (e.g., "summer-audit")
-  const slugFromUrl = route.params.slug
-
+  // Fetch form by slug
   const { data, error } = await supabase
     .from('forms')
     .select('*')
-    .eq('slug', slugFromUrl) // <--- Use the dynamic variable
+    .eq('slug', slugFromUrl)
     .single()
 
   if (error) {
-    console.error('Error loading form:', error)
-    formTitle.value = 'Form not found'
+    alert('Form not found!')
   } else {
     formTitle.value = data.title
+    formSchema.value = data.schema
     formId.value = data.id
-    currentSchema.value = data.schema
+    formDescription.value = data.description
+    formInfoBlocks.value = data.info_blocks
+    
+    // Initialize empty answers object
+    const initialData = {}
+    data.schema.forEach(field => {
+      initialData[field.id] = ''
+    })
+    formData.value = initialData
   }
-
   loading.value = false
 }
 
-// 2. Submit Logic (Updated to use real ID)
 const submitForm = async () => {
-  if (!formId.value) return
-  isSubmitting.value = true
-
-  try {
-    const { error } = await supabase.from('submissions').insert({
-      form_id: formId.value, // <--- Using the real ID from the DB
-      response_data: formData.value,
+  submitting.value = true
+  
+  const { error } = await supabase
+    .from('submissions')
+    .insert({
+      form_id: formId.value,
+      response_data: formData.value
     })
-
-    if (error) throw error
-
-    alert('Report saved successfully!')
-    formData.value = {} // Reset form
-  } catch (err) {
-    console.error(err)
-    alert('Error saving: ' + err.message)
-  } finally {
-    isSubmitting.value = false
+    
+  if (error) {
+    alert('Error submitting form: ' + error.message)
+  } else {
+    submitted.value = true
   }
+  submitting.value = false
 }
 
-// Load on startup
 onMounted(() => {
   fetchForm()
 })
 </script>
 
 <template>
-  <div class="max-w-2xl mx-auto p-6">
-    <div v-if="loading" class="text-center py-10">
-      <div class="animate-spin text-3xl mb-2">⏳</div>
-      <p class="text-gray-500">Loading form...</p>
+  <div class="min-h-full bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
+    
+    <div v-if="loading" class="text-center text-gray-500 mt-20">
+      <div class="animate-spin text-4xl mb-4">⌛</div>
+      Loading form...
     </div>
 
-    <div v-else class="bg-white shadow-lg rounded-xl p-6 border border-gray-100">
-      <h1 class="text-2xl font-bold mb-6 border-b pb-4">{{ formTitle }}</h1>
+    <div v-else-if="submitted" class="max-w-md mx-auto bg-white p-8 rounded-xl shadow-lg text-center border border-green-100">
+      <div class="text-6xl mb-4">🎉</div>
+      <h2 class="text-2xl font-bold text-gray-900 mb-2">Thank You!</h2>
+      <p class="text-gray-500">Your submission has been received.</p>
+      <button @click="$router.go(0)" class="mt-6 text-blue-600 font-bold hover:underline">
+        Submit another response
+      </button>
+    </div>
 
-      <FormRenderer :schema="currentSchema" v-model="formData" />
+    <div v-else class="mx-auto">
+      
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-start">
+        
+        <div class="lg:col-span-5 lg:sticky lg:top-8">
+          <div class="bg-white shadow-sm rounded-2xl p-6 lg:p-8 border border-gray-100">
+            <FormPresentation 
+              :title="formTitle"
+              :description="formDescription"
+              :blocks="formInfoBlocks"
+            />
+          </div>
+        </div>
 
-      <div class="mt-8 pt-6 border-t border-gray-100 flex justify-end">
-        <button
-          @click="submitForm"
-          :disabled="isSubmitting"
-          class="bg-black text-white px-8 py-3 rounded-lg font-bold hover:bg-gray-800 disabled:opacity-50 transition-all shadow-md"
-        >
-          {{ isSubmitting ? 'Saving...' : 'Submit Report' }}
-        </button>
+        <div class="lg:col-span-7">
+          <div class="bg-white shadow-lg rounded-2xl p-6 lg:p-10 border border-gray-100 relative">
+          
+
+            <form @submit.prevent="submitForm" class="space-y-8">
+              
+              <FormRenderer 
+                :schema="formSchema" 
+                v-model="formData" 
+              />
+
+              <div class="pt-6 border-t border-gray-100 flex justify-center">
+                <button 
+                  type="submit" 
+                  :disabled="submitting"
+                  class="bg-black text-white px-8 py-4 rounded-xl font-bold text-lg hover:bg-gray-800 transition shadow-md w-full sm:w-auto disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {{ submitting ? 'Sending...' : 'Submit Report' }}
+                </button>
+              </div>
+
+            </form>
+          </div>
+        </div>
+
       </div>
     </div>
+
   </div>
 </template>

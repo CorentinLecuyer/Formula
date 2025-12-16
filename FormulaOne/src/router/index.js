@@ -18,6 +18,11 @@ const router = createRouter({
       component: FormBuilder
     },
     {
+      path: '/edit/:slug',
+      name: 'EditForm',
+      component: () => import('../views/CreateForm.vue') // Reuses the Builder
+    },
+    {
       path: '/summary',
       name: 'summary',
       component: SummaryPage
