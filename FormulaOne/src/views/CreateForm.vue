@@ -123,7 +123,7 @@ const saveForm = async () => {
         <input
           v-model="title"
           type="text"
-          placeholder="e.g. Summer Audit"
+          placeholder="e.g. NAB Commando"
           class="w-full border rounded-md p-2"
         />
       </div>

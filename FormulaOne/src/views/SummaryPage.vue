@@ -74,24 +74,42 @@ const formatDate = (dateStr) => new Date(dateStr).toLocaleDateString() + ' ' + n
 
 <template>
   <div class="max-w-7xl mx-auto p-8">
-    <div class="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
-      <h1 class="text-3xl font-bold">Dashboard</h1>
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-6">
+      <h1 class="text-3xl font-bold tracking-tight text-gray-900">Dashboard</h1>
       
-      <div class="flex items-center gap-6 bg-gray-50 p-2 rounded-lg border border-gray-200">
-        <div class="flex items-center gap-2">
-          <span class="text-xs font-bold text-gray-400 uppercase">Form:</span>
-          <select v-model="selectedFormId" class="bg-white border rounded px-3 py-1 text-sm font-medium focus:ring-black focus:border-black">
+      <div class="flex flex-wrap items-center gap-3">
+        
+        <div class="relative group">
+          <div class="absolute -top-2.5 left-2 bg-white px-1 text-[10px] font-semibold text-gray-500 uppercase tracking-wider">
+            Report
+          </div>
+          <select 
+            v-model="selectedFormId" 
+            class="bg-white border border-gray-300 text-gray-900 text-sm rounded-md focus:ring-black focus:border-black block w-full pl-3 pr-8 py-2.5 shadow-sm hover:border-gray-400 transition-colors cursor-pointer appearance-none min-w-[200px]"
+          >
             <option v-for="form in forms" :key="form.id" :value="form.id">{{ form.title }}</option>
           </select>
+          <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-500">
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+          </div>
         </div>
 
-        <div v-if="availableT1s.length > 0" class="flex items-center gap-2 border-l pl-6 border-gray-300">
-          <span class="text-xs font-bold text-gray-400 uppercase">Filter Rep:</span>
-          <select v-model="selectedT1Name" class="bg-white border rounded px-3 py-1 text-sm font-medium focus:ring-black focus:border-black min-w-[150px]">
+        <div v-if="availableT1s.length > 0" class="relative group">
+          <div class="absolute -top-2.5 left-2 bg-white px-1 text-[10px] font-semibold text-gray-500 uppercase tracking-wider">
+            Sales Rep
+          </div>
+          <select 
+            v-model="selectedT1Name" 
+            class="bg-white border border-gray-300 text-gray-900 text-sm rounded-md focus:ring-black focus:border-black block w-full pl-3 pr-8 py-2.5 shadow-sm hover:border-gray-400 transition-colors cursor-pointer appearance-none min-w-[180px]"
+          >
             <option value="">All Reps ({{ availableT1s.length }})</option>
             <option v-for="name in availableT1s" :key="name" :value="name">{{ name }}</option>
           </select>
+          <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-500">
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+          </div>
         </div>
+
       </div>
     </div>
 
