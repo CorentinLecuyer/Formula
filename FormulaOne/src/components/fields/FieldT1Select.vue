@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { supabase } from '@/supabase'
 
 const props = defineProps(['modelValue', 'field'])
@@ -32,6 +32,11 @@ const onSearch = async () => {
   results.value = data || []
   showResults.value = true
 }
+const clearSelection = () => {
+  t1Name.value = ''
+  t2Name.value = ''
+  emit('update:modelValue', null)
+}
 
 const selectUser = (row) => {
   t1Name.value = row.full_name
@@ -43,6 +48,14 @@ const selectUser = (row) => {
 
   emit('update:modelValue', { t1: t1Name.value, t2: t2Name.value })
 }
+
+watch(() => props.modelValue, (newVal) => {
+  if (newVal) {
+    // Update whatever local variables control the text input
+    t1Name.value = newVal.t1
+    t2Name.value = newVal.t2
+  }
+}, { immediate: true })
 </script>
 
 <template>
@@ -71,14 +84,22 @@ const selectUser = (row) => {
       </ul>
     </div>
 
-    <div class="grid grid-cols-2 gap-4 bg-gray-50 p-3 rounded border border-gray-200">
-      <div>
-        <label class="text-[10px] text-gray-400 uppercase">T1 User</label>
+    <div class="flex gap-4 p-3 bg-gray-50 rounded border border-gray-200">
+      <div class="flex-1">
+        <label class="text-[10px] text-gray-400 uppercase">T1 user</label>
         <div class="font-bold text-gray-800">{{ t1Name || '-' }}</div>
       </div>
-      <div>
+      <div class="w-1/3 border-l pl-4 border-gray-200 relative">
         <label class="text-[10px] text-gray-400 uppercase">T2 Manager (Auto)</label>
-        <div class="font-bold text-gray-500 italic">{{ t2Name || '-' }}</div>
+        <div class="font-bold text-gray-500">{{ t2Name || '-' }}</div>
+
+                        <button
+          v-if="t1Name"
+          @click="clearSelection"
+          class="absolute top-0 right-0 text-red-400 hover:text-red-600 font-bold px-1"
+        >
+          ✕
+        </button>
       </div>
     </div>
   </div>

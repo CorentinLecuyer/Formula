@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { supabase } from '../supabase'
 
 
@@ -24,6 +24,9 @@ const isUploading = ref(false)
 const errorMsg = ref('')
 const previewUrl = ref(props.modelValue || '')
 
+watch(() => props.modelValue, (newVal) => {
+  previewUrl.value = newVal || ''
+})
 // HELPER: Compress Image to max 1920px width (Client-side)
 const compressImage = async (file) => {
   return new Promise((resolve) => {

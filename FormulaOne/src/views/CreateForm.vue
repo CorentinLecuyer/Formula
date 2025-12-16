@@ -13,6 +13,7 @@ const isEditing = ref(false) // Track mode
 const formId = ref(null) // Store ID for updates
 
 // 1. Form Metadata
+const status = ref('draft')
 const title = ref('')
 const description = ref('')
 const infoBlocks = ref([])
@@ -26,7 +27,7 @@ const activeBlockIndex = ref(null)
 
 // THE BIG LIST OF ICONS 🎨
 const iconLibrary = [
-  { category: 'Status', icons: ['ℹ️', '⚠️', '✅', '❌', '❓', '❗', '🛑', '🆗'] },
+  { category: 'Status', icons: ['ℹ️', '⚠️', '✅', '❌', '❓', '❗', '🎨', '🆗'] },
   { category: 'Safety', icons: ['⛑️', '🦺', '👓', '🧤', '🔥', '⚡', '🚧', '🚑'] },
   { category: 'Business', icons: ['📊', '📈', '📉', '📅', '📎', '💼', '📁', '🤝'] },
   { category: 'Logistics', icons: ['📦', '🚛', '🏭', '📍', '🗺️', '⏱️', '🧱', '🏗️'] },
@@ -205,7 +206,7 @@ const saveForm = async () => {
     description: description.value,
     info_blocks: infoBlocks.value,
     schema: finalSchema,
-    status: 'active',
+    status: status.value,
   }
 
   let dbError = null
@@ -356,16 +357,31 @@ const handleBlockImageUpload = async (event, index) => {
       </div>
 
       <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-200 mb-6">
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Form Title</label>
-          <input
-            v-model="title"
-            type="text"
-            placeholder="e.g. Morning Safety Check"
-            class="w-full border border-gray-300 rounded-md p-2 focus:ring-black focus:border-black"
-          />
-        </div>
-      </div>
+  <div class="mb-4">
+    <label class="block text-sm font-medium text-gray-700 mb-1">Form Title</label>
+    <input
+      v-model="title"
+      type="text"
+      placeholder="e.g. Morning Safety Check"
+      class="w-full border border-gray-300 rounded-md p-2 focus:ring-black focus:border-black"
+    />
+  </div>
+
+  <div>
+    <label class="block text-sm font-medium text-gray-700 mb-1">Status</label>
+    <select
+      v-model="status"
+      class="w-full border border-gray-300 rounded-md p-2 bg-white focus:ring-black focus:border-black"
+    >
+      <option value="draft">Draft</option>
+      <option value="active">Active</option>
+      <option value="archived">Inactive</option>
+    </select>
+    <p class="text-xs text-gray-500 mt-1">
+      Only "Active" forms are visible to users.
+    </p>
+  </div>
+</div>
 
       <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-200 mb-8 space-y-6">
         <h2 class="text-xl font-bold border-b pb-2">Presentation & Context</h2>
@@ -564,15 +580,15 @@ const handleBlockImageUpload = async (event, index) => {
 
             <div
               v-if="field.type === 'select'"
-              class="col-span-12 bg-purple-50 p-4 rounded-md border border-purple-100"
+              class="col-span-12 bg-orange-50 p-4 rounded-md border border-orange-100"
             >
-              <label class="text-xs text-purple-600 uppercase font-bold"
+              <label class="text-xs text-gray-600 uppercase font-bold"
                 >Options (Comma Separated)</label
               >
               <input
                 type="text"
                 placeholder="e.g. Red, Blue, Green"
-                class="w-full border border-purple-200 rounded p-2 mt-1 focus:ring-purple-500 focus:border-purple-500"
+                class="w-full border border-orange-200 rounded p-2 mt-1 focus:ring-orange-500 focus:border-orange-500"
                 :value="field.options ? field.options.join(', ') : ''"
                 @input="(e) => (field.options = e.target.value.split(',').map((s) => s.trim()))"
               />
@@ -621,7 +637,7 @@ const handleBlockImageUpload = async (event, index) => {
             <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">
               {{ cat.category }}
             </h4>
-            <div class="grid grid-cols-6 gap-3">
+            <div class="flex flex-wrap justify-between">
               <button
                 v-for="icon in cat.icons"
                 :key="icon"
