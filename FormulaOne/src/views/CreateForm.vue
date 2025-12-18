@@ -34,7 +34,6 @@ const iconLibrary = [
   { category: 'Action', icons: ['🎯', '🚀', '🔍', '✏️', '📸', '📞', '💾', '🗑️'] },
   { category: 'Fun/Other', icons: ['🍺', '🍻', '⭐', '💡', '🎉', '🏆', '🍔', '👍'] },
   { category: 'Tools', icons: ['🧰', '⛏️', '🔨', '🔧', '⚒️', '🛠️', '🔩'] },
-
 ]
 
 // --- LOAD EXISTING DATA (IF EDITING) ---
@@ -44,6 +43,38 @@ onMounted(async () => {
     await loadFormForEdit(route.params.slug)
   }
 })
+
+// --- DRAG & DROP LOGIC (MOVED TO TOP LEVEL) ---
+const dragIndex = ref(null)
+const isDragHandleHovered = ref(false)
+
+// 1. Start Dragging
+const onDragStart = (event, index) => {
+  dragIndex.value = index
+  // Optional: Change the drag image or effect here
+  event.dataTransfer.effectAllowed = 'move'
+}
+
+// 2. Swapping Logic (Live Reorder)
+const onDragEnter = (index) => {
+  // If not dragging, or dragging over the same item, stop
+  if (dragIndex.value === null || dragIndex.value === index) return
+
+  // Remove the item from its old position
+  const itemToMove = fields.value.splice(dragIndex.value, 1)[0]
+  
+  // Insert it at the new position
+  fields.value.splice(index, 0, itemToMove)
+  
+  // Update the tracker so we keep following the item
+  dragIndex.value = index
+}
+
+// 3. End Dragging
+const onDragEnd = () => {
+  dragIndex.value = null
+  isDragHandleHovered.value = false
+}
 
 const loadFormForEdit = async (slug) => {
   isLoading.value = true
@@ -267,21 +298,25 @@ const compressImage = async (file) => {
         const canvas = document.createElement('canvas')
         const MAX_WIDTH = 1000 // Smaller max width for info blocks
         const scaleSize = MAX_WIDTH / img.width
-        
+
         if (img.width > MAX_WIDTH) {
-           canvas.width = MAX_WIDTH
-           canvas.height = img.height * scaleSize
+          canvas.width = MAX_WIDTH
+          canvas.height = img.height * scaleSize
         } else {
-           canvas.width = img.width
-           canvas.height = img.height
+          canvas.width = img.width
+          canvas.height = img.height
         }
-        
+
         const ctx = canvas.getContext('2d')
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
-        
-        canvas.toBlob((blob) => {
-          resolve(new File([blob], file.name, { type: 'image/jpeg', lastModified: Date.now() }))
-        }, 'image/jpeg', 0.8) 
+
+        canvas.toBlob(
+          (blob) => {
+            resolve(new File([blob], file.name, { type: 'image/jpeg', lastModified: Date.now() }))
+          },
+          'image/jpeg',
+          0.8,
+        )
       }
     }
   })
@@ -303,11 +338,9 @@ const handleBlockImageUpload = async (event, index) => {
   }
 
   const filePath = `builder_assets/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.]/g, '_')}`
-  
+
   // 2. Upload to 'attachments' bucket
-  const { error } = await supabase.storage
-    .from('attachments') 
-    .upload(filePath, fileToUpload)
+  const { error } = await supabase.storage.from('attachments').upload(filePath, fileToUpload)
 
   if (error) {
     alert('Upload failed: ' + error.message)
@@ -315,12 +348,11 @@ const handleBlockImageUpload = async (event, index) => {
   }
 
   // 3. Get URL
-  const { data } = supabase.storage
-    .from('attachments')
-    .getPublicUrl(filePath)
+  const { data } = supabase.storage.from('attachments').getPublicUrl(filePath)
 
   // 4. Save URL to the specific block
   infoBlocks.value[index].image = data.publicUrl
+
 }
 </script>
 
@@ -359,31 +391,29 @@ const handleBlockImageUpload = async (event, index) => {
       </div>
 
       <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-200 mb-6">
-  <div class="mb-4">
-    <label class="block text-sm font-medium text-gray-700 mb-1">Form Title</label>
-    <input
-      v-model="title"
-      type="text"
-      placeholder="e.g. Morning Safety Check"
-      class="w-full border border-gray-300 rounded-md p-2 focus:ring-black focus:border-black"
-    />
-  </div>
+        <div class="mb-4">
+          <label class="block text-sm font-medium text-gray-700 mb-1">Form Title</label>
+          <input
+            v-model="title"
+            type="text"
+            placeholder="e.g. Morning Safety Check"
+            class="w-full border border-gray-300 rounded-md p-2 focus:ring-black focus:border-black"
+          />
+        </div>
 
-  <div>
-    <label class="block text-sm font-medium text-gray-700 mb-1">Status</label>
-    <select
-      v-model="status"
-      class="w-full border border-gray-300 rounded-md p-2 bg-white focus:ring-black focus:border-black"
-    >
-      <option value="draft">Draft</option>
-      <option value="active">Active</option>
-      <option value="archived">Inactive</option>
-    </select>
-    <p class="text-xs text-gray-500 mt-1">
-      Only "Active" forms are visible to users.
-    </p>
-  </div>
-</div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Status</label>
+          <select
+            v-model="status"
+            class="w-full border border-gray-300 rounded-md p-2 bg-white focus:ring-black focus:border-black"
+          >
+            <option value="draft">Draft</option>
+            <option value="active">Active</option>
+            <option value="archived">Inactive</option>
+          </select>
+          <p class="text-xs text-gray-500 mt-1">Only "Active" forms are visible to users.</p>
+        </div>
+      </div>
 
       <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-200 mb-8 space-y-6">
         <h2 class="text-xl font-bold border-b pb-2">Presentation & Context</h2>
@@ -437,22 +467,27 @@ const handleBlockImageUpload = async (event, index) => {
                 <label class="text-xs text-gray-500 uppercase font-bold">
                   Content <span class="text-gray-400 font-normal lowercase">(Ctrl+B, Ctrl+U)</span>
                 </label>
-                <textarea 
-                  v-model="block.content" 
+                <textarea
+                  v-model="block.content"
                   @keydown="(e) => handleContentKeydown(e, index)"
-                  rows="2" 
-                  placeholder="Details..." 
+                  rows="2"
+                  placeholder="Details..."
                   class="w-full mt-1 border rounded p-2 text-sm focus:ring-black focus:border-black font-mono"
                 ></textarea>
               </div>
 
               <div class="col-span-12 pt-2 border-t border-gray-100">
-                <label class="text-xs text-gray-500 uppercase font-bold mb-2 block">Block Image (Optional)</label>
-                
+                <label class="text-xs text-gray-500 uppercase font-bold mb-2 block"
+                  >Block Image (Optional)</label
+                >
+
                 <div v-if="block.image" class="relative inline-block group">
-                  <img :src="block.image" class="h-32 w-auto rounded-lg border border-gray-200 shadow-sm object-cover" />
-                  <button 
-                    @click="block.image = null" 
+                  <img
+                    :src="block.image"
+                    class="h-32 w-auto rounded-lg border border-gray-200 shadow-sm object-cover"
+                  />
+                  <button
+                    @click="block.image = null"
                     class="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center shadow-md hover:bg-red-600 font-bold"
                   >
                     ✕
@@ -460,9 +495,16 @@ const handleBlockImageUpload = async (event, index) => {
                 </div>
 
                 <div v-else>
-                  <label class="cursor-pointer flex items-center gap-2 text-sm text-blue-600 font-bold hover:bg-blue-50 w-fit px-3 py-2 rounded-md transition">
+                  <label
+                    class="cursor-pointer flex items-center gap-2 text-sm text-blue-600 font-bold hover:bg-blue-50 w-fit px-3 py-2 rounded-md transition"
+                  >
                     <span>📷 Add Picture</span>
-                    <input type="file" accept="image/*" class="hidden" @change="(e) => handleBlockImageUpload(e, index)" />
+                    <input
+                      type="file"
+                      accept="image/*"
+                      class="hidden"
+                      @change="(e) => handleBlockImageUpload(e, index)"
+                    />
                   </label>
                 </div>
               </div>
@@ -547,9 +589,21 @@ const handleBlockImageUpload = async (event, index) => {
         <div
           v-for="(field, index) in fields"
           :key="field.id"
-          class="bg-white p-6 rounded-lg shadow-sm border border-gray-200 flex gap-4 items-start group"
+          :draggable="isDragHandleHovered"
+          @dragstart="onDragStart(index)"
+          @dragenter.prevent="onDragEnter(index)"
+          @dragover.prevent
+          @dragend="onDragEnd"
+          class="bg-white p-6 rounded-lg shadow-sm border border-gray-200 flex gap-4 items-start group transition-all duration-200"
+          :class="{ 'opacity-50 border-dashed border-black scale-[0.98]': dragIndex === index }"
         >
-          <div class="text-gray-300 mt-3 cursor-move text-xl">⋮⋮</div>
+          <div
+            class="text-gray-300 mt-3 cursor-move text-xl flex self-center hover:text-black transition-colors"
+            @mouseenter="isDragHandleHovered = true"
+            @mouseleave="isDragHandleHovered = false"
+          >
+            ⋮⋮
+          </div>
 
           <div class="flex-grow grid grid-cols-12 gap-6">
             <div class="col-span-2">
