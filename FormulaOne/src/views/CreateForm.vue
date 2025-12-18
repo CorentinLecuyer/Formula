@@ -44,38 +44,6 @@ onMounted(async () => {
   }
 })
 
-// --- DRAG & DROP LOGIC (MOVED TO TOP LEVEL) ---
-const dragIndex = ref(null)
-const isDragHandleHovered = ref(false)
-
-// 1. Start Dragging
-const onDragStart = (event, index) => {
-  dragIndex.value = index
-  // Optional: Change the drag image or effect here
-  event.dataTransfer.effectAllowed = 'move'
-}
-
-// 2. Swapping Logic (Live Reorder)
-const onDragEnter = (index) => {
-  // If not dragging, or dragging over the same item, stop
-  if (dragIndex.value === null || dragIndex.value === index) return
-
-  // Remove the item from its old position
-  const itemToMove = fields.value.splice(dragIndex.value, 1)[0]
-  
-  // Insert it at the new position
-  fields.value.splice(index, 0, itemToMove)
-  
-  // Update the tracker so we keep following the item
-  dragIndex.value = index
-}
-
-// 3. End Dragging
-const onDragEnd = () => {
-  dragIndex.value = null
-  isDragHandleHovered.value = false
-}
-
 const loadFormForEdit = async (slug) => {
   isLoading.value = true
   const { data, error } = await supabase.from('forms').select('*').eq('slug', slug).single()
@@ -93,7 +61,6 @@ const loadFormForEdit = async (slug) => {
   infoBlocks.value = data.info_blocks || []
 
   // IMPORTANT: Filter out the auto-generated "Partner Fields"
-  // We don't want to show the read-only ID fields in the builder UI
   fields.value = (data.schema || []).filter((field) => !field.is_partner)
 
   isLoading.value = false
@@ -180,15 +147,42 @@ const applyTagToSelection = async (textarea, openTag, closeTag, updateFn) => {
   textarea.setSelectionRange(start + openTag.length, end + openTag.length)
 }
 
+// --- DRAG & DROP LOGIC ---
+const dragIndex = ref(null)
+const isDragHandleHovered = ref(false)
+
+const onDragStart = (event, index) => {
+  dragIndex.value = index
+  // Optional: visually indicates a move operation
+  event.dataTransfer.effectAllowed = 'move'
+}
+
+const onDragEnter = (index) => {
+  if (dragIndex.value === null || dragIndex.value === index) return
+
+  // Remove the item from its old position
+  const itemToMove = fields.value.splice(dragIndex.value, 1)[0]
+  
+  // Insert it at the new position
+  fields.value.splice(index, 0, itemToMove)
+  
+  // Update the tracker so we know where it is now
+  dragIndex.value = index
+}
+
+const onDragEnd = () => {
+  dragIndex.value = null
+  isDragHandleHovered.value = false
+}
+
 // --- SAVE & DELETE LOGIC ---
 
 const saveForm = async () => {
   if (!title.value) return alert('Please provide a Title.')
   isSaving.value = true
 
-  // Generate Slug (Only updates if this is a NEW form to avoid breaking links)
+  // Generate Slug
   let finalSlug = route.params.slug
-
   if (!isEditing.value) {
     finalSlug = title.value
       .toLowerCase()
@@ -198,10 +192,17 @@ const saveForm = async () => {
       .replace(/^-+|-+$/g, '')
   }
 
-  // Process Schema (Re-inject Partner Fields)
+  // Process Schema
   const finalSchema = []
   fields.value.forEach((field) => {
+    
+    // CLEANUP: Remove empty options (blank lines)
+    if (field.type === 'select' && Array.isArray(field.options)) {
+      field.options = field.options.filter(opt => opt.trim().length > 0)
+    }
+
     finalSchema.push(field)
+
     // Re-add partner fields for smart objects
     if (field.type === 'depot_select') {
       finalSchema.push({
@@ -235,7 +236,7 @@ const saveForm = async () => {
 
   const payload = {
     title: title.value,
-    slug: finalSlug, // We keep the slug consistent during edit
+    slug: finalSlug,
     description: description.value,
     info_blocks: infoBlocks.value,
     schema: finalSchema,
@@ -245,11 +246,9 @@ const saveForm = async () => {
   let dbError = null
 
   if (isEditing.value) {
-    // UPDATE
     const res = await supabase.from('forms').update(payload).eq('id', formId.value)
     dbError = res.error
   } else {
-    // INSERT
     const res = await supabase.from('forms').insert(payload)
     dbError = res.error
   }
@@ -265,18 +264,10 @@ const saveForm = async () => {
 }
 
 const deleteForm = async () => {
-  if (
-    !confirm(
-      'Are you sure? This will delete the form AND all submissions associated with it. This cannot be undone.',
-    )
-  )
-    return
+  if (!confirm('Are you sure? This will delete the form AND all submissions associated with it. This cannot be undone.')) return
 
   isSaving.value = true
-  // Delete submissions first (if not cascading) - usually cascading handles it but safer to be sure
   await supabase.from('submissions').delete().eq('form_id', formId.value)
-
-  // Delete Form
   const { error } = await supabase.from('forms').delete().eq('id', formId.value)
 
   if (error) {
@@ -296,7 +287,7 @@ const compressImage = async (file) => {
       img.src = event.target.result
       img.onload = () => {
         const canvas = document.createElement('canvas')
-        const MAX_WIDTH = 1000 // Smaller max width for info blocks
+        const MAX_WIDTH = 1000 
         const scaleSize = MAX_WIDTH / img.width
 
         if (img.width > MAX_WIDTH) {
@@ -310,24 +301,18 @@ const compressImage = async (file) => {
         const ctx = canvas.getContext('2d')
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
 
-        canvas.toBlob(
-          (blob) => {
+        canvas.toBlob((blob) => {
             resolve(new File([blob], file.name, { type: 'image/jpeg', lastModified: Date.now() }))
-          },
-          'image/jpeg',
-          0.8,
-        )
+          }, 'image/jpeg', 0.8)
       }
     }
   })
 }
 
-// UPLOAD HANDLER FOR BLOCKS
 const handleBlockImageUpload = async (event, index) => {
   const file = event.target.files[0]
   if (!file) return
 
-  // 1. Upload logic
   let fileToUpload = file
   if (file.type.startsWith('image/')) {
     try {
@@ -338,8 +323,6 @@ const handleBlockImageUpload = async (event, index) => {
   }
 
   const filePath = `builder_assets/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.]/g, '_')}`
-
-  // 2. Upload to 'attachments' bucket
   const { error } = await supabase.storage.from('attachments').upload(filePath, fileToUpload)
 
   if (error) {
@@ -347,12 +330,8 @@ const handleBlockImageUpload = async (event, index) => {
     return
   }
 
-  // 3. Get URL
   const { data } = supabase.storage.from('attachments').getPublicUrl(filePath)
-
-  // 4. Save URL to the specific block
   infoBlocks.value[index].image = data.publicUrl
-
 }
 </script>
 
@@ -585,20 +564,29 @@ const handleBlockImageUpload = async (event, index) => {
         </button>
       </div>
 
-      <div class="space-y-4 mb-20">
+      <TransitionGroup 
+        name="list" 
+        tag="div" 
+        class="space-y-4 mb-20"
+      >
         <div
           v-for="(field, index) in fields"
           :key="field.id"
-          :draggable="isDragHandleHovered"
-          @dragstart="onDragStart(index)"
+          
+          :draggable="isDragHandleHovered" 
+          @dragstart="onDragStart($event, index)"
           @dragenter.prevent="onDragEnter(index)"
           @dragover.prevent
           @dragend="onDragEnd"
-          class="bg-white p-6 rounded-lg shadow-sm border border-gray-200 flex gap-4 items-start group transition-all duration-200"
-          :class="{ 'opacity-50 border-dashed border-black scale-[0.98]': dragIndex === index }"
+          
+          class="bg-white p-6 rounded-lg shadow-sm border border-gray-200 flex gap-4 items-start group transition-all duration-300"
+          :class="{ 
+            'border-black ring-1 ring-black shadow-lg z-10 scale-[1.01]': dragIndex === index,
+            'hover:border-gray-300': dragIndex !== index
+          }"
         >
-          <div
-            class="text-gray-300 mt-3 cursor-move text-xl flex self-center hover:text-black transition-colors"
+          <div 
+            class="text-gray-300 mt-3 cursor-move text-xl flex self-center hover:text-black transition-colors px-2"
             @mouseenter="isDragHandleHovered = true"
             @mouseleave="isDragHandleHovered = false"
           >
@@ -639,16 +627,16 @@ const handleBlockImageUpload = async (event, index) => {
               class="col-span-12 bg-orange-50 p-4 rounded-md border border-orange-100"
             >
               <label class="text-xs text-gray-600 uppercase font-bold"
-                >Options (Comma Separated)</label
+                >Options (One per line)</label
               >
-              <input
-                type="text"
-                placeholder="e.g. Red, Blue, Green"
-                class="w-full border border-orange-200 rounded p-2 mt-1 focus:ring-orange-500 focus:border-orange-500"
-                :value="field.options ? field.options.join(', ') : ''"
-                @input="(e) => (field.options = e.target.value.split(',').map((s) => s.trim()))"
-              />
-              <p class="text-xs text-gray-400 mt-1">Users will select one of these.</p>
+              <textarea
+                rows="3"
+                placeholder="Option 1&#10;Option 2&#10;Option 3"
+                class="w-full border border-orange-200 rounded p-2 mt-1 focus:ring-orange-500 focus:border-orange-500 font-mono text-sm"
+                :value="field.options ? field.options.join('\n') : ''"
+                @input="(e) => (field.options = e.target.value.split('\n'))"
+              ></textarea>
+              <p class="text-xs text-gray-400 mt-1">Users will select one of these. Press Enter to add a new option.</p>
             </div>
 
             <div class="col-span-12 flex justify-end pt-2 border-t border-gray-100">
@@ -661,14 +649,14 @@ const handleBlockImageUpload = async (event, index) => {
             </div>
           </div>
         </div>
+      </TransitionGroup>
 
-        <div
-          v-if="fields.length === 0"
-          class="text-center py-12 border-2 border-dashed border-gray-300 rounded-xl text-gray-400 bg-gray-50"
-        >
-          <p>The form is empty.</p>
-          <p class="text-sm">Click a button above to add your first question.</p>
-        </div>
+      <div
+        v-if="fields.length === 0"
+        class="text-center py-12 border-2 border-dashed border-gray-300 rounded-xl text-gray-400 bg-gray-50"
+      >
+        <p>The form is empty.</p>
+        <p class="text-sm">Click a button above to add your first question.</p>
       </div>
     </div>
 
@@ -709,3 +697,22 @@ const handleBlockImageUpload = async (event, index) => {
     </div>
   </div>
 </template>
+
+<style scoped>
+/* List Transitions for Drag & Drop */
+.list-move, 
+.list-enter-active,
+.list-leave-active {
+  transition: all 0.3s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.list-enter-from,
+.list-leave-to {
+  opacity: 0;
+  transform: translateX(30px);
+}
+
+.list-leave-active {
+  position: absolute;
+}
+</style>
