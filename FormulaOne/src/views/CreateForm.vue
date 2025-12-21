@@ -2,10 +2,11 @@
 import { ref, onMounted, nextTick } from 'vue'
 import { supabase } from '../supabase'
 import { useRouter, useRoute } from 'vue-router'
+import { useToast } from 'vue-toastification'
 
 const router = useRouter()
 const route = useRoute()
-
+const toast = useToast()
 // STATE
 const isSaving = ref(false)
 const isLoading = ref(false)
@@ -162,10 +163,10 @@ const onDragEnter = (index) => {
 
   // Remove the item from its old position
   const itemToMove = fields.value.splice(dragIndex.value, 1)[0]
-  
+
   // Insert it at the new position
   fields.value.splice(index, 0, itemToMove)
-  
+
   // Update the tracker so we know where it is now
   dragIndex.value = index
 }
@@ -178,7 +179,7 @@ const onDragEnd = () => {
 // --- SAVE & DELETE LOGIC ---
 
 const saveForm = async () => {
-  if (!title.value) return alert('Please provide a Title.')
+  if (!title.value) return toast.warning('Please provide a Title.') // ⚠️ Warning
   isSaving.value = true
 
   // Generate Slug
@@ -195,10 +196,9 @@ const saveForm = async () => {
   // Process Schema
   const finalSchema = []
   fields.value.forEach((field) => {
-    
     // CLEANUP: Remove empty options (blank lines)
     if (field.type === 'select' && Array.isArray(field.options)) {
-      field.options = field.options.filter(opt => opt.trim().length > 0)
+      field.options = field.options.filter((opt) => opt.trim().length > 0)
     }
 
     finalSchema.push(field)
@@ -256,23 +256,27 @@ const saveForm = async () => {
   isSaving.value = false
 
   if (dbError) {
-    alert('Error saving: ' + dbError.message)
+    toast.error('Error saving: ' + dbError.message) // ❌ Error
   } else {
-    alert(isEditing.value ? 'Form updated!' : 'Form created!')
+    toast.success(isEditing.value ? 'Form updated!' : 'Form created!') // ✅ Success
     router.push('/')
   }
 }
 
 const deleteForm = async () => {
-  if (!confirm('Are you sure? This will delete the form AND all submissions associated with it. This cannot be undone.')) return
+  if (
+    !confirm(
+      'Are you sure? This will delete the form AND all submissions associated with it. This cannot be undone.',
+    )
+  )
+    return
 
   isSaving.value = true
   await supabase.from('submissions').delete().eq('form_id', formId.value)
   const { error } = await supabase.from('forms').delete().eq('id', formId.value)
 
   if (error) {
-    alert('Error deleting: ' + error.message)
-    isSaving.value = false
+    toast.error('Error deleting!') // ❌ Error    isSaving.value = false
   } else {
     router.push('/')
   }
@@ -287,7 +291,7 @@ const compressImage = async (file) => {
       img.src = event.target.result
       img.onload = () => {
         const canvas = document.createElement('canvas')
-        const MAX_WIDTH = 1000 
+        const MAX_WIDTH = 1000
         const scaleSize = MAX_WIDTH / img.width
 
         if (img.width > MAX_WIDTH) {
@@ -301,9 +305,13 @@ const compressImage = async (file) => {
         const ctx = canvas.getContext('2d')
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
 
-        canvas.toBlob((blob) => {
+        canvas.toBlob(
+          (blob) => {
             resolve(new File([blob], file.name, { type: 'image/jpeg', lastModified: Date.now() }))
-          }, 'image/jpeg', 0.8)
+          },
+          'image/jpeg',
+          0.8,
+        )
       }
     }
   })
@@ -564,28 +572,22 @@ const handleBlockImageUpload = async (event, index) => {
         </button>
       </div>
 
-      <TransitionGroup 
-        name="list" 
-        tag="div" 
-        class="space-y-4 mb-20"
-      >
+      <TransitionGroup name="list" tag="div" class="space-y-4 mb-20">
         <div
           v-for="(field, index) in fields"
           :key="field.id"
-          
-          :draggable="isDragHandleHovered" 
+          :draggable="isDragHandleHovered"
           @dragstart="onDragStart($event, index)"
           @dragenter.prevent="onDragEnter(index)"
           @dragover.prevent
           @dragend="onDragEnd"
-          
           class="bg-white p-6 rounded-lg shadow-sm border border-gray-200 flex gap-4 items-start group transition-all duration-300"
-          :class="{ 
+          :class="{
             'border-black ring-1 ring-black shadow-lg z-10 scale-[1.01]': dragIndex === index,
-            'hover:border-gray-300': dragIndex !== index
+            'hover:border-gray-300': dragIndex !== index,
           }"
         >
-          <div 
+          <div
             class="text-gray-300 mt-3 cursor-move text-xl flex self-center hover:text-black transition-colors px-2"
             @mouseenter="isDragHandleHovered = true"
             @mouseleave="isDragHandleHovered = false"
@@ -636,7 +638,9 @@ const handleBlockImageUpload = async (event, index) => {
                 :value="field.options ? field.options.join('\n') : ''"
                 @input="(e) => (field.options = e.target.value.split('\n'))"
               ></textarea>
-              <p class="text-xs text-gray-400 mt-1">Users will select one of these. Press Enter to add a new option.</p>
+              <p class="text-xs text-gray-400 mt-1">
+                Users will select one of these. Press Enter to add a new option.
+              </p>
             </div>
 
             <div class="col-span-12 flex justify-end pt-2 border-t border-gray-100">
@@ -700,7 +704,7 @@ const handleBlockImageUpload = async (event, index) => {
 
 <style scoped>
 /* List Transitions for Drag & Drop */
-.list-move, 
+.list-move,
 .list-enter-active,
 .list-leave-active {
   transition: all 0.3s cubic-bezier(0.25, 1, 0.5, 1);
