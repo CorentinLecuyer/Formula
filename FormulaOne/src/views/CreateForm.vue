@@ -7,14 +7,16 @@ import { useToast } from 'vue-toastification'
 const router = useRouter()
 const route = useRoute()
 const toast = useToast()
+
 // STATE
 const isSaving = ref(false)
 const isLoading = ref(false)
-const isEditing = ref(false) // Track mode
-const formId = ref(null) // Store ID for updates
+const isEditing = ref(false)
+const formId = ref(null)
+const currentUser = ref(null)
 
 // 1. Form Metadata
-const status = ref('draft')
+const status = ref('draft') // Default is draft
 const title = ref('')
 const description = ref('')
 const infoBlocks = ref([])
@@ -26,7 +28,6 @@ const fields = ref([])
 const showIconPicker = ref(false)
 const activeBlockIndex = ref(null)
 
-// THE BIG LIST OF ICONS 🎨
 const iconLibrary = [
   { category: 'Status', icons: ['ℹ️', '⚠️', '✅', '❌', '❓', '❗', '🎨', '🆗'] },
   { category: 'Safety', icons: ['⛑️', '🦺', '👓', '🧤', '🔥', '⚡', '🚧', '🚑'] },
@@ -37,8 +38,12 @@ const iconLibrary = [
   { category: 'Tools', icons: ['🧰', '⛏️', '🔨', '🔧', '⚒️', '🛠️', '🔩'] },
 ]
 
-// --- LOAD EXISTING DATA (IF EDITING) ---
 onMounted(async () => {
+  // 1. Fetch User SAFELY inside onMounted (Fixes "Running in circles" bug)
+  const { data } = await supabase.auth.getUser()
+  currentUser.value = data.user
+
+  // 2. Load Form if Editing
   if (route.params.slug) {
     isEditing.value = true
     await loadFormForEdit(route.params.slug)
@@ -47,11 +52,26 @@ onMounted(async () => {
 
 const loadFormForEdit = async (slug) => {
   isLoading.value = true
-  const { data, error } = await supabase.from('forms').select('*').eq('slug', slug).single()
+  console.log('🔹 Fetching form data for slug:', slug) // DEBUG
+
+  const { data, error } = await supabase
+    .from('forms')
+    .select('*')
+    .eq('slug', slug)
+    .single()
+
+  console.log('🔹 Supabase Response:', { data, error }) // DEBUG
 
   if (error) {
-    alert('Error loading form: ' + error.message)
-    router.push('/')
+    console.error('🔴 Error loading form:', error) // DEBUG
+    toast.error('Error loading form: ' + error.message)
+    // router.push('/') // Commented out so you can see the console
+    return
+  }
+
+  if (!data) {
+    console.error('🔴 No data returned! RLS Policy likely blocking access.') // DEBUG
+    toast.error('Form not found or access denied.')
     return
   }
 
@@ -59,16 +79,15 @@ const loadFormForEdit = async (slug) => {
   formId.value = data.id
   title.value = data.title
   description.value = data.description
+  status.value = data.status
   infoBlocks.value = data.info_blocks || []
-
-  // IMPORTANT: Filter out the auto-generated "Partner Fields"
   fields.value = (data.schema || []).filter((field) => !field.is_partner)
 
+  console.log('✅ Form Loaded Successfully:', title.value) // DEBUG
   isLoading.value = false
 }
 
 // --- HELPER FUNCTIONS ---
-
 const openIconPicker = (index) => {
   activeBlockIndex.value = index
   showIconPicker.value = true
@@ -100,7 +119,6 @@ const removeField = (index) => {
   fields.value.splice(index, 1)
 }
 
-// KEYBOARD SHORTCUTS
 const handleContentKeydown = async (event, index) => {
   if (!event.ctrlKey && !event.metaKey) return
   let tag = ''
@@ -136,13 +154,10 @@ const applyTagToSelection = async (textarea, openTag, closeTag, updateFn) => {
   const start = textarea.selectionStart
   const end = textarea.selectionEnd
   const text = textarea.value
-
   const before = text.substring(0, start)
   const selected = text.substring(start, end)
   const after = text.substring(end)
-
   updateFn(before + openTag + selected + closeTag + after)
-
   await nextTick()
   textarea.focus()
   textarea.setSelectionRange(start + openTag.length, end + openTag.length)
@@ -154,20 +169,13 @@ const isDragHandleHovered = ref(false)
 
 const onDragStart = (event, index) => {
   dragIndex.value = index
-  // Optional: visually indicates a move operation
   event.dataTransfer.effectAllowed = 'move'
 }
 
 const onDragEnter = (index) => {
   if (dragIndex.value === null || dragIndex.value === index) return
-
-  // Remove the item from its old position
   const itemToMove = fields.value.splice(dragIndex.value, 1)[0]
-
-  // Insert it at the new position
   fields.value.splice(index, 0, itemToMove)
-
-  // Update the tracker so we know where it is now
   dragIndex.value = index
 }
 
@@ -177,12 +185,10 @@ const onDragEnd = () => {
 }
 
 // --- SAVE & DELETE LOGIC ---
-
 const saveForm = async () => {
-  if (!title.value) return toast.warning('Please provide a Title.') // ⚠️ Warning
+  if (!title.value) return toast.warning('Please provide a Title.')
   isSaving.value = true
 
-  // Generate Slug
   let finalSlug = route.params.slug
   if (!isEditing.value) {
     finalSlug = title.value
@@ -193,17 +199,14 @@ const saveForm = async () => {
       .replace(/^-+|-+$/g, '')
   }
 
-  // Process Schema
   const finalSchema = []
   fields.value.forEach((field) => {
-    // CLEANUP: Remove empty options (blank lines)
     if (field.type === 'select' && Array.isArray(field.options)) {
       field.options = field.options.filter((opt) => opt.trim().length > 0)
     }
-
     finalSchema.push(field)
 
-    // Re-add partner fields for smart objects
+    // Partner fields logic
     if (field.type === 'depot_select') {
       finalSchema.push({
         id: field.id + '_ship_to_number',
@@ -241,10 +244,10 @@ const saveForm = async () => {
     info_blocks: infoBlocks.value,
     schema: finalSchema,
     status: status.value,
+    created_by: currentUser.value?.id,
   }
 
   let dbError = null
-
   if (isEditing.value) {
     const res = await supabase.from('forms').update(payload).eq('id', formId.value)
     dbError = res.error
@@ -254,29 +257,22 @@ const saveForm = async () => {
   }
 
   isSaving.value = false
-
   if (dbError) {
-    toast.error('Error saving: ' + dbError.message) // ❌ Error
+    toast.error('Error saving: ' + dbError.message)
   } else {
-    toast.success(isEditing.value ? 'Form updated!' : 'Form created!') // ✅ Success
+    toast.success(isEditing.value ? 'Form updated!' : 'Form created!')
     router.push('/')
   }
 }
 
 const deleteForm = async () => {
-  if (
-    !confirm(
-      'Are you sure? This will delete the form AND all submissions associated with it. This cannot be undone.',
-    )
-  )
+  if (!confirm('Are you sure? This will delete the form AND all submissions associated with it.'))
     return
-
   isSaving.value = true
   await supabase.from('submissions').delete().eq('form_id', formId.value)
   const { error } = await supabase.from('forms').delete().eq('id', formId.value)
-
   if (error) {
-    toast.error('Error deleting!') // ❌ Error    isSaving.value = false
+    toast.error('Error deleting!')
   } else {
     router.push('/')
   }
@@ -293,7 +289,6 @@ const compressImage = async (file) => {
         const canvas = document.createElement('canvas')
         const MAX_WIDTH = 1000
         const scaleSize = MAX_WIDTH / img.width
-
         if (img.width > MAX_WIDTH) {
           canvas.width = MAX_WIDTH
           canvas.height = img.height * scaleSize
@@ -301,10 +296,8 @@ const compressImage = async (file) => {
           canvas.width = img.width
           canvas.height = img.height
         }
-
         const ctx = canvas.getContext('2d')
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
-
         canvas.toBlob(
           (blob) => {
             resolve(new File([blob], file.name, { type: 'image/jpeg', lastModified: Date.now() }))
@@ -320,24 +313,20 @@ const compressImage = async (file) => {
 const handleBlockImageUpload = async (event, index) => {
   const file = event.target.files[0]
   if (!file) return
-
   let fileToUpload = file
   if (file.type.startsWith('image/')) {
     try {
       fileToUpload = await compressImage(file)
     } catch (e) {
-      console.warn('Compression failed', e)
+      console.warn(e)
     }
   }
-
   const filePath = `builder_assets/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.]/g, '_')}`
   const { error } = await supabase.storage.from('attachments').upload(filePath, fileToUpload)
-
   if (error) {
     alert('Upload failed: ' + error.message)
     return
   }
-
   const { data } = supabase.storage.from('attachments').getPublicUrl(filePath)
   infoBlocks.value[index].image = data.publicUrl
 }
