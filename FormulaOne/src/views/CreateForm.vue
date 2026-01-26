@@ -54,11 +54,7 @@ const loadFormForEdit = async (slug) => {
   isLoading.value = true
   console.log('🔹 Fetching form data for slug:', slug) // DEBUG
 
-  const { data, error } = await supabase
-    .from('forms')
-    .select('*')
-    .eq('slug', slug)
-    .single()
+  const { data, error } = await supabase.from('forms').select('*').eq('slug', slug).single()
 
   console.log('🔹 Supabase Response:', { data, error }) // DEBUG
 
@@ -106,15 +102,74 @@ const addInfoBlock = () => {
 }
 
 const addField = (type) => {
-  fields.value.push({
+  // 1. Create the base field object
+  const newField = {
     id: crypto.randomUUID(),
     type: type,
     label: '',
     required: false,
     options: [],
+  }
+
+  // 2. Add specific logic for 'table' type
+  if (type === 'table') {
+    newField.columns = [
+      { id: crypto.randomUUID(), label: 'Item', type: 'text', locked: true },
+      { id: crypto.randomUUID(), label: 'Quantity', type: 'number', locked: false },
+    ]
+    newField.rows = [
+      // Initialize one empty row
+      { [newField.columns[0].id]: '', [newField.columns[1].id]: '' },
+    ]
+  }
+
+  // 3. Push to the main list
+  fields.value.push(newField)
+}
+
+// --- TABLE SPECIFIC LOGIC ---
+const addTableColumn = (fieldIndex) => {
+  const field = fields.value[fieldIndex]
+  if (field.columns.length >= 5) {
+    toast.warning('Max 5 columns allowed')
+    return
+  }
+  const newColId = crypto.randomUUID()
+  field.columns.push({ id: newColId, label: 'New Col', type: 'text', locked: false })
+
+  // Update existing rows to have this new column key
+  field.rows.forEach((row) => {
+    row[newColId] = ''
   })
 }
 
+const removeTableColumn = (fieldIndex, colIndex) => {
+  const field = fields.value[fieldIndex]
+  if (field.columns.length <= 2) {
+    toast.warning('Min 2 columns required')
+    return
+  }
+  const colIdToRemove = field.columns[colIndex].id
+  field.columns.splice(colIndex, 1)
+
+  // Clean up data in rows
+  field.rows.forEach((row) => {
+    delete row[colIdToRemove]
+  })
+}
+
+const addTableRow = (fieldIndex) => {
+  const field = fields.value[fieldIndex]
+  const newRow = {}
+  field.columns.forEach((col) => {
+    newRow[col.id] = ''
+  })
+  field.rows.push(newRow)
+}
+
+const removeTableRow = (fieldIndex, rowIndex) => {
+  fields.value[fieldIndex].rows.splice(rowIndex, 1)
+}
 const removeField = (index) => {
   fields.value.splice(index, 1)
 }
@@ -310,6 +365,18 @@ const compressImage = async (file) => {
   })
 }
 
+const uploadFile = async (file) => {
+  let fileToUpload = file
+  if (file.type.startsWith('image/')) {
+    try { fileToUpload = await compressImage(file) } catch (e) { console.warn(e) }
+  }
+  const filePath = `builder_assets/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.]/g, '_')}`
+  const { error } = await supabase.storage.from('attachments').upload(filePath, fileToUpload)
+  if (error) throw error
+  const { data } = supabase.storage.from('attachments').getPublicUrl(filePath)
+  return data.publicUrl
+}
+
 const handleBlockImageUpload = async (event, index) => {
   const file = event.target.files[0]
   if (!file) return
@@ -329,6 +396,18 @@ const handleBlockImageUpload = async (event, index) => {
   }
   const { data } = supabase.storage.from('attachments').getPublicUrl(filePath)
   infoBlocks.value[index].image = data.publicUrl
+}
+
+const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) => {
+  const file = event.target.files[0]
+  if (!file) return
+  try {
+    const url = await uploadFile(file)
+    // Assign URL to the specific cell in the specific row
+    fields.value[fieldIndex].rows[rowIndex][colId] = url
+  } catch (e) {
+    alert('Upload failed: ' + e.message)
+  }
 }
 </script>
 
@@ -522,12 +601,7 @@ const handleBlockImageUpload = async (event, index) => {
         >
           + Number
         </button>
-        <button
-          @click="addField('select')"
-          class="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-md text-sm font-bold shadow transition"
-        >
-          + Dropdown
-        </button>
+
         <button
           @click="addField('signature')"
           class="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-md text-sm font-bold shadow transition"
@@ -539,6 +613,18 @@ const handleBlockImageUpload = async (event, index) => {
           class="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-md text-sm font-bold shadow transition"
         >
           + Attachment
+        </button>
+                <button
+          @click="addField('select')"
+          class="px-4 py-2 hover:bg-orange-800 bg-orange-700 text-white rounded-md text-sm font-bold shadow transition"
+        >
+          + Dropdown
+        </button>
+        <button
+          @click="addField('table')"
+          class="px-4 py-2 hover:bg-orange-800 bg-orange-700 text-white rounded-md text-sm font-bold shadow transition"
+        >
+          + Custom Table
         </button>
         <div class="w-px h-8 bg-gray-300 mx-2"></div>
         <button
@@ -612,10 +698,173 @@ const handleBlockImageUpload = async (event, index) => {
                 class="mt-3 h-5 w-5 text-black focus:ring-black border-gray-300 rounded"
               />
             </div>
+            <div
+              v-if="field.type === 'table'"
+              class="col-span-12 bg-gray-100 border-gray-200  p-4 rounded-lg border"
+            >
+              <div class="mb-6">
+                <div class="flex justify-between items-center mb-2">
+                  <label class="text-xs text-orange-800 uppercase font-bold"
+                    >Table Columns (2-5)</label
+                  >
+                  <div class="flex gap-2">
+                    <button
+                      @click="addTableColumn(index)"
+                      :disabled="field.columns.length >= 5"
+                      class="text-xs bg-green-200 text-green-800 px-2 py-1 rounded hover:bg-green-300 disabled:opacity-50"
+                    >
+                      Add Column
+                    </button>
+                  </div>
+                </div>
 
+                <div class="grid gap-2">
+                  <div
+                    v-for="(col, cIdx) in field.columns"
+                    :key="col.id"
+                    class="flex gap-2 items-center bg-white p-2 rounded border border-gray-200"
+                  >
+                    <input
+                      v-model="col.label"
+                      placeholder="Col Name"
+                      class="border rounded p-1 text-sm flex-grow"
+                    />
+
+                    <select v-model="col.type" class="border rounded p-1 text-sm bg-gray-50">
+                      <option value="text">String</option>
+                      <option value="number">Number</option>
+                      <option value="image">Picture</option>
+                    </select>
+
+                    <label
+                      class="flex items-center gap-1 text-xs text-gray-600 cursor-pointer select-none border px-2 py-1 rounded bg-gray-50 hover:bg-gray-100"
+                    >
+                      <input type="checkbox" v-model="col.locked" />
+                      <span>Locked?</span>
+                    </label>
+
+                    <button
+                      @click="removeTableColumn(index, cIdx)"
+                      :disabled="field.columns.length <= 2"
+                      class="text-red-400 hover:text-red-600 font-bold px-2 disabled:opacity-30"
+                    >
+                      ×
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <div class="flex justify-between items-center mb-2">
+                  <label class="text-xs text-orange-800 uppercase font-bold"
+                    >Table Content (Rows)</label
+                  >
+                  <button
+                    @click="addTableRow(index)"
+                    class="text-xs bg-green-200 text-green-800 px-2 py-1 rounded hover:bg-green-300"
+                  >
+                    Add Row
+                  </button>
+                </div>
+
+                <div class="overflow-x-auto border rounded-lg bg-white">
+                  <table class="w-full text-sm text-left">
+                    <thead class="bg-orange-100 text-orange-900 font-bold">
+                      <tr>
+                        <th
+                          v-for="col in field.columns"
+                          :key="col.id"
+                          class="p-2 border-b border-gray-200"
+                        >
+                          {{ col.label }}
+                          <span
+                            v-if="col.locked"
+                            class="text-[10px] bg-gray-600 text-white px-1 rounded ml-1"
+                            >LOCK</span
+                          >
+                          <span v-else class="text-[10px] bg-green-600 text-white px-1 rounded ml-1"
+                            >USER</span
+                          >
+                        </th>
+                        <th class="p-2 border-b border-purple-200 w-10"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="(row, rIdx) in field.rows" :key="rIdx" class="hover:bg-gray-50">
+                        <td
+                          v-for="col in field.columns"
+                          :key="col.id"
+                          class="p-2 border-b border-gray-100"
+                        >
+                          <template v-if="col.locked">
+                            <div v-if="col.type === 'image'">
+                              <div v-if="row[col.id]" class="relative group w-16 h-16">
+                                <img
+                                  :src="row[col.id]"
+                                  class="h-[72px] w-auto object-contain align-middle"
+                                />
+                                <button
+                                  @click="row[col.id] = ''"
+                                  class="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-xs"
+                                >
+                                  ×
+                                </button>
+                              </div>
+                              <label
+                                v-else
+                                class="cursor-pointer text-xs text-orange-500 hover:underline"
+                              >
+                                Upload
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  class="hidden"
+                                  @change="
+                                    (e) => handleTableCellImageUpload(e, index, rIdx, col.id)
+                                  "
+                                />
+                              </label>
+                            </div>
+                            <input
+                              v-else
+                              v-model="row[col.id]"
+                              :type="col.type"
+                              class="w-full border rounded p-1 text-sm bg-yellow-50"
+                              placeholder="Pre-fill..."
+                            />
+                          </template>
+
+                          <template v-else>
+                            <div
+                              class="w-full border rounded p-1 text-sm bg-gray-100 text-gray-400 italic text-center cursor-not-allowed"
+                            >
+                              User will fill
+                            </div>
+                          </template>
+                        </td>
+                        <td class="p-2 border-b border-gray-100 text-center">
+                          <button
+                            @click="removeTableRow(index, rIdx)"
+                            class="text-red-400 hover:text-red-600 font-bold"
+                          >
+                            ×
+                          </button>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <div
+                    v-if="field.rows.length === 0"
+                    class="p-4 text-center text-gray-400 text-xs italic"
+                  >
+                    No rows added. Table will be empty.
+                  </div>
+                </div>
+              </div>
+            </div>
             <div
               v-if="field.type === 'select'"
-              class="col-span-12 bg-orange-50 p-4 rounded-md border border-orange-100"
+              class="col-span-12 bg-orange-50 border-orange-100 p-4 rounded-md border "
             >
               <label class="text-xs text-gray-600 uppercase font-bold"
                 >Options (One per line)</label

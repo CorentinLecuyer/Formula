@@ -20,11 +20,11 @@ const loading = ref(true)
 const submitting = ref(false)
 const submitted = ref(false)
 // 1. New State for Errors
-const validationErrors = ref([]) 
+const validationErrors = ref([])
 
 const fetchForm = async () => {
   loading.value = true
-  
+
   const { data, error } = await supabase.from('forms').select('*').eq('slug', slugFromUrl).single()
 
   if (error) {
@@ -41,9 +41,11 @@ const fetchForm = async () => {
 
   const initialData = {}
   data.schema.forEach((field) => {
-    // Initialize based on type to ensure reactivity
     if (['poc_select', 'manager_select'].includes(field.type)) {
       initialData[field.id] = null
+    }
+    else if (field.type === 'table') {
+      initialData[field.id] = field.rows ? JSON.parse(JSON.stringify(field.rows)) : []
     } else {
       initialData[field.id] = ''
     }
@@ -72,19 +74,16 @@ const fetchForm = async () => {
 // 2. New Validation Logic
 const validateForm = () => {
   validationErrors.value = []
-  
-  formSchema.value.forEach(field => {
+
+  formSchema.value.forEach((field) => {
     // Only check if field is required and NOT a read-only partner field
     if (field.required && !field.is_partner) {
       const val = formData.value[field.id]
 
       // Check for empty values (Null, Undefined, Empty String)
       // We allow '0' for number fields.
-      const isEmpty = 
-        val === null || 
-        val === undefined || 
-        val === '' || 
-        (Array.isArray(val) && val.length === 0)
+      const isEmpty =
+        val === null || val === undefined || val === '' || (Array.isArray(val) && val.length === 0)
 
       if (isEmpty) {
         validationErrors.value.push(field.label || 'Unknown Field')
@@ -109,18 +108,16 @@ const submitForm = async () => {
   if (submissionId.value) {
     const { error: updateError } = await supabase
       .from('submissions')
-      .update({ 
+      .update({
         response_data: formData.value,
       })
       .eq('id', submissionId.value)
     error = updateError
   } else {
-    const { error: insertError } = await supabase
-      .from('submissions')
-      .insert({
-        form_id: formId.value,
-        response_data: formData.value,
-      })
+    const { error: insertError } = await supabase.from('submissions').insert({
+      form_id: formId.value,
+      response_data: formData.value,
+    })
     error = insertError
   }
 
@@ -141,7 +138,11 @@ onMounted(() => {
 <template>
   <div class="min-h-full bg-gray-50 py-6 px-4 sm:px-6 lg:px-8">
     <div v-if="loading" class="text-center text-gray-500 mt-20">
-      <div class="animate-spin text-4xl mb-4">⌛</div>
+      <div class="flex items-center justify-center">
+        <div
+          class="w-12 h-12 border-4 border-gray-200 border-t-blue-500 rounded-full animate-spin"
+        ></div>
+      </div>
       {{ submissionId ? 'Loading submission...' : 'Loading form...' }}
     </div>
 
@@ -156,19 +157,26 @@ onMounted(() => {
       <p class="text-gray-500">
         {{ submissionId ? 'Your report has been updated.' : 'Your submission has been received.' }}
       </p>
-      
+
       <div class="mt-6 flex flex-col gap-2">
         <button @click="$router.push('/summary')" class="text-black font-bold hover:underline">
           Back to Dashboard
         </button>
-        <button v-if="!submissionId" @click="$router.go(0)" class="text-blue-600 font-bold hover:underline">
+        <button
+          v-if="!submissionId"
+          @click="$router.go(0)"
+          class="text-blue-600 font-bold hover:underline"
+        >
           Submit another response
         </button>
       </div>
     </div>
 
     <div v-else class="mx-auto">
-      <div v-if="submissionId" class="mb-4 bg-yellow-50 border border-yellow-200 p-3 rounded-lg text-yellow-800 text-sm font-bold text-center">
+      <div
+        v-if="submissionId"
+        class="mb-4 bg-yellow-50 border border-yellow-200 p-3 rounded-lg text-yellow-800 text-sm font-bold text-center"
+      >
         ⚠️ You are editing an existing submission
       </div>
 
@@ -185,13 +193,22 @@ onMounted(() => {
 
         <div class="lg:col-span-7">
           <div class="bg-white shadow-lg rounded-2xl p-6 lg:p-10 border border-gray-100 relative">
-            
             <form @submit.prevent="submitForm" class="space-y-8">
               <FormRenderer :schema="formSchema" v-model="formData" />
 
-              <div v-if="validationErrors.length > 0" class="bg-red-50 border border-red-200 rounded-lg p-4 animate-pulse">
+              <div
+                v-if="validationErrors.length > 0"
+                class="bg-red-50 border border-red-200 rounded-lg p-4 animate-pulse"
+              >
                 <div class="flex items-center gap-2 text-red-700 font-bold mb-2">
-                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                    ></path>
+                  </svg>
                   <span>Veuillez corriger les erreurs suivantes :</span>
                 </div>
                 <ul class="list-disc list-inside text-sm text-red-600">
@@ -207,7 +224,7 @@ onMounted(() => {
                   :disabled="submitting"
                   class="bg-black text-white px-8 py-4 rounded-xl font-bold text-lg hover:bg-gray-800 transition shadow-md w-full sm:w-auto disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {{ submitting ? 'Saving...' : (submissionId ? 'Update Report' : 'Submit Report') }}
+                  {{ submitting ? 'Saving...' : submissionId ? 'Update Report' : 'Submit Report' }}
                 </button>
               </div>
             </form>
