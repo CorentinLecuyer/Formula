@@ -83,16 +83,23 @@ const handleFieldUpdate = (fieldId, newValue) => {
 }
 
 // --- 3. Table Image Upload Helper ---
-const handleUserImageUpload = async (event, fieldId, rowIndex, colId) => {
+const handleUserImageUpload = async (event, fieldId, rowIndex, colId, fieldValidation) => {
   const file = event.target.files[0]
   if (!file) return
+
+  // 1. Check Max File Size (Default 5MB)
+  const maxSizeMB = fieldValidation?.maxFileSize || 5
+  if (file.size > maxSizeMB * 1024 * 1024) {
+    alert(`File is too large! Maximum size is ${maxSizeMB}MB.`)
+    event.target.value = '' // Reset input
+    return
+  }
 
   const filePath = `submissions/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.]/g, '_')}`
   const { error } = await supabase.storage.from('attachments').upload(filePath, file)
 
   if (!error) {
     const { data } = supabase.storage.from('attachments').getPublicUrl(filePath)
-
     const rows = [...(props.modelValue[fieldId] || [])]
     if (rows[rowIndex]) {
       rows[rowIndex] = { ...rows[rowIndex], [colId]: data.publicUrl }
@@ -149,7 +156,7 @@ const handleUserImageUpload = async (event, fieldId, rowIndex, colId) => {
                       v-if="row[col.id]"
                       :src="row[col.id]"
                       class="h-[72px] w-auto object-contain"
-                      alt="Item"  
+                      alt="Item"
                     />
                   </div>
 
@@ -169,10 +176,7 @@ const handleUserImageUpload = async (event, fieldId, rowIndex, colId) => {
 
                   <div v-else class="flex justify-center">
                     <div v-if="row[col.id]" class="relative inline-block">
-                      <img
-                        :src="row[col.id]"
-                        class="h-10 w-auto object-contain rounded"
-                      />
+                      <img :src="row[col.id]" class="h-10 w-auto object-contain rounded" />
                       <button
                         @click="row[col.id] = ''"
                         class="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs"

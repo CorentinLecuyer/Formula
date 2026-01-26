@@ -66,28 +66,30 @@ const editSubmission = (submission) => {
 // ---------------------------------------------------------
 const exportToExcel = () => {
   const dataToExport = displayedSubmissions.value.map((sub) => {
-    // Start with basic metadata
     const row = {
       Date: formatDate(sub.created_at),
     }
 
-    // Loop through schema to flatten data
     currentSchema.value.forEach((field) => {
       // A. HANDLE TABLES
       if (field.type === 'table') {
         const tableRows = sub.response_data[field.id] || []
 
+        // Find the "Label" column (First text column)
+        const labelCol = field.columns.find((c) => c.type === 'text')
+
         tableRows.forEach((tableRow, rIdx) => {
           field.columns.forEach((col) => {
-            // Only export NON-LOCKED columns (User Inputs)
             if (!col.locked) {
-              // Create dynamic header: "My Table (Row 1) - Quantity"
-              const headerName = `${field.label} (#${rIdx + 1}) - ${col.label}`
+              // 🧠 SMART HEADER: Use Text Column Value if available, else Row Number
+              const rowName =
+                labelCol && tableRow[labelCol.id] ? tableRow[labelCol.id] : `#${rIdx + 1}`
 
-              // Handle Images in export
+              const headerName = `${field.label} (${rowName}) - ${col.label}`
+
               let cellVal = tableRow[col.id]
               if (col.type === 'image' && cellVal) {
-                cellVal = '[Image Link]' // Excel can't easily display the image directly via JS
+                cellVal = '[Image Link]'
               }
 
               row[headerName] = cellVal || ''
@@ -98,7 +100,6 @@ const exportToExcel = () => {
       // B. HANDLE STANDARD FIELDS
       else {
         const cellValue = sub.response_data[field.id]
-        // Check for base64 images to avoid massive strings in Excel
         if (cellValue && cellValue.toString().startsWith('data:image')) {
           row[field.label] = '[Image - Cannot Export]'
         } else {
@@ -110,7 +111,6 @@ const exportToExcel = () => {
     return row
   })
 
-  // Create Workbook
   const worksheet = XLSX.utils.json_to_sheet(dataToExport)
   const workbook = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(workbook, worksheet, 'Submissions')
@@ -349,7 +349,7 @@ const formatDate = (dateStr) =>
                           <tr
                             v-for="(row, rIdx) in sub.response_data[field.id] || []"
                             :key="rIdx"
-                            class="border-b border-gray-200  last:border-0"
+                            class="border-b border-gray-200 last:border-0"
                           >
                             <td
                               v-for="col in field.columns"
