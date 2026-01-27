@@ -1,9 +1,10 @@
 <script setup>
 import { ref } from 'vue'
-import { supabase } from '../supabase'
+import { useAuth } from '../composables/useAuth'
 import { useRouter } from 'vue-router'
 import { useToast } from 'vue-toastification'
 import loginImage from '../assets/Login_image_people_idea.png'
+import { supabase } from '../supabase'
 
 const email = ref('')
 const password = ref('')
@@ -11,18 +12,18 @@ const loading = ref(false)
 const router = useRouter()
 const toast = useToast()
 
+const { login } = useAuth()
 const handleLogin = async () => {
   loading.value = true
-  const { data, error } = await supabase.auth.signInWithPassword({
-    email: email.value,
-    password: password.value,
-  })
+  
+  // Use the new robust login function
+  const { error } = await login(email.value, password.value)
 
   if (error) {
     toast.error(error.message)
   } else {
     toast.success('Welcome back!')
-    router.push('/summary')
+    router.push('/summary') // Now safe to redirect, role is ready
   }
   loading.value = false
 }

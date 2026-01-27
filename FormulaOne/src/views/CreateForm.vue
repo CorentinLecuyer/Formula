@@ -63,7 +63,41 @@ const loadFormForEdit = async (slug) => {
   description.value = data.description
   status.value = data.status
   infoBlocks.value = data.info_blocks || []
-  fields.value = (data.schema || []).filter((field) => !field.is_partner)
+
+  // 🛡️ DATA MIGRATION: Fix old schemas that lack validation objects
+  const rawSchema = data.schema || []
+
+  rawSchema.forEach((field) => {
+    // 1. Ensure top-level validation object exists
+    if (!field.validation) {
+      field.validation = {
+        minLength: null,
+        maxLength: null,
+        min: null,
+        max: null,
+        multiSelect: false,
+        minSelect: null,
+        maxSelect: null,
+        maxFileSize: 5,
+        sumColumnId: '',
+        minSum: null,
+        maxSum: null,
+      }
+    }
+
+    // 2. Ensure nested Table Columns have validation objects
+    if (field.type === 'table' && Array.isArray(field.columns)) {
+      field.columns.forEach((col) => {
+        if (!col.validation) {
+          col.validation = { minLength: null, maxLength: null, min: null, max: null }
+        }
+        // Also ensure 'required' flag exists
+        if (col.required === undefined) col.required = false
+      })
+    }
+  })
+
+  fields.value = rawSchema.filter((field) => !field.is_partner)
 
   isLoading.value = false
 }
@@ -379,8 +413,9 @@ const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) =>
 <template>
   <div class="max-w-7xl mx-auto p-8">
     <div v-if="isLoading" class="text-center py-20 text-gray-500">
-      <div class="animate-spin text-4xl mb-4">⌛</div>
-      Loading...
+      <div
+        class="w-12 h-12 border-4 border-gray-200 border-t-blue-500 rounded-full animate-spin"
+      ></div>
     </div>
 
     <div v-else>
@@ -675,15 +710,24 @@ const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) =>
 
             <div
               v-if="field.type === 'table'"
-              class="col-span-12 bg-purple-50 p-4 rounded-lg border border-purple-100"
+              class="col-span-12 bg-gray-50 p-4 rounded-lg border border-gray-100"
             >
               <div class="grid gap-2 mb-4">
-                <h4 class="text-xs font-bold text-purple-800 uppercase">Column Configuration</h4>
+                <div class="flex justify-between items-center mb-2">
+                  <h4 class="text-xs font-bold text-blue-800 uppercase">Column Configuration</h4>
 
+                  <button
+                    @click="addTableColumn(index)"
+                    :disabled="field.columns.length >= 6"
+                    class="text-xs bg-gray-200 text-gray-800 px-2 py-1 rounded hover:bg-gray-300"
+                  >
+                    + Add Column
+                  </button>
+                </div>
                 <div
                   v-for="(col, cIdx) in field.columns"
                   :key="col.id"
-                  class="flex flex-col gap-2 bg-white p-3 rounded border border-purple-100"
+                  class="flex flex-col gap-2 bg-white p-3 rounded border border-gray-100"
                 >
                   <div class="flex gap-2 items-center">
                     <input
@@ -719,9 +763,9 @@ const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) =>
 
                   <div
                     v-if="!col.locked && col.type !== 'image'"
-                    class="flex items-center gap-3 pl-2 border-l-2 border-purple-200"
+                    class="flex items-center gap-3 pl-2 border-l-2 border-gray-200"
                   >
-                    <span class="text-[10px] text-purple-400 font-bold uppercase tracking-wide"
+                    <span class="text-[10px] text-blue-400 font-bold uppercase tracking-wide"
                       >Rules:</span
                     >
 
@@ -768,31 +812,23 @@ const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) =>
                     </template>
                   </div>
                 </div>
-
-                <button
-                  @click="addTableColumn(index)"
-                  :disabled="field.columns.length >= 6"
-                  class="text-xs text-left text-purple-600 hover:text-purple-800 font-bold mt-1"
-                >
-                  + Add Column
-                </button>
               </div>
 
               <div>
                 <div class="flex justify-between items-center mb-2">
-                  <label class="text-xs text-purple-800 uppercase font-bold"
+                  <label class="text-xs text-gray-800 uppercase font-bold"
                     >Table Content Preview</label
                   >
                   <button
                     @click="addTableRow(index)"
-                    class="text-xs bg-purple-200 text-purple-800 px-2 py-1 rounded hover:bg-purple-300"
+                    class="text-xs bg-gray-200 text-gray-800 px-2 py-1 rounded hover:bg-gray-300"
                   >
                     Add Row
                   </button>
                 </div>
                 <div class="overflow-x-auto border rounded-lg bg-white">
                   <table class="w-full text-sm text-left">
-                    <thead class="bg-purple-100 text-purple-900 font-bold">
+                    <thead class="bg-gray-100 text-gray-900 font-bold">
                       <tr>
                         <th v-for="col in field.columns" :key="col.id" class="p-2 border-b">
                           {{ col.label }}
@@ -840,7 +876,7 @@ const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) =>
                             User Input
                           </div>
                         </td>
-                        <td class="p-2 border-b text-center">
+                        <td class="p-2 border-b border-gray-100 text-center">
                           <button
                             @click="removeTableRow(index, rIdx)"
                             class="text-red-400 font-bold"

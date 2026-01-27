@@ -9,13 +9,11 @@ const loading = ref(true)
 // 2. HELPER: Fetch Role from Database
 const fetchRole = async (userId) => {
   if (!userId) return 'user'
-  
   const { data } = await supabase
     .from('profiles')
     .select('role')
     .eq('id', userId)
     .single()
-    
   return data?.role || 'user'
 }
 
@@ -24,7 +22,7 @@ const fetchRole = async (userId) => {
 const initAuth = async () => {
   loading.value = true
   const { data: { session } } = await supabase.auth.getSession()
-  
+
   if (session?.user) {
     user.value = session.user
     userRole.value = await fetchRole(session.user.id)
@@ -56,17 +54,40 @@ supabase.auth.onAuthStateChange(async (event, session) => {
 initAuth()
 
 export function useAuth() {
-  
+
   // We expose the global refs
+  const login = async (email, password) => {
+    loading.value = true
+    
+    // 1. Perform Login
+    const { data, error } = await supabase.auth.signInWithPassword({ 
+      email, 
+      password 
+    })
+
+    if (error) {
+      loading.value = false
+      return { error }
+    }
+
+    // 2. Force Fetch Role immediately (Await this!)
+    if (data.user) {
+      user.value = data.user
+      userRole.value = await fetchRole(data.user.id)
+    }
+
+    loading.value = false
+    return { user: data.user, error: null }
+  }
+
   const isAdmin = () => userRole.value === 'admin'
-  const currentUserId = () => user.value?.id
 
   return {
     user,
     userRole,
     loading,
-    fetchUser: initAuth, // We can reuse initAuth as fetchUser
     isAdmin,
-    currentUserId
+    login, // Export the new function
+    fetchUser: initAuth
   }
 }
