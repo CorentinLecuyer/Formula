@@ -464,23 +464,106 @@ const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) =>
 
       <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-200 mb-8 space-y-6">
         <h2 class="text-xl font-bold border-b pb-2">Presentation & Context</h2>
+        
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Introductory Summary</label>
+          <label class="block text-sm font-medium text-gray-700 mb-1">
+            Introductory Summary
+            <span class="text-gray-400 font-normal lowercase">(Ctrl+B for Bold, Ctrl+U for Underline)</span>
+          </label>
           <textarea
             v-model="description"
+            @keydown="handleDescriptionKeydown"
             rows="3"
-            class="w-full border border-gray-300 rounded-md p-2 font-mono text-sm"
+            placeholder="Explain the goal of this form to your users..."
+            class="w-full border border-gray-300 rounded-md p-2 focus:ring-black focus:border-black font-mono text-sm"
           ></textarea>
         </div>
+
         <div class="space-y-4">
+          <label class="block text-sm font-medium text-gray-700">Info Blocks (Optional)</label>
+
+          <div
+            v-for="(block, index) in infoBlocks"
+            :key="index"
+            class="bg-gray-50 p-4 rounded-lg border border-gray-200 relative group transition hover:shadow-md"
+          >
+            <div class="grid grid-cols-12 gap-4">
+              <div class="col-span-2 flex flex-col items-center">
+                <label class="text-xs text-gray-500 uppercase font-bold mb-1">Icon</label>
+                <button
+                  @click="openIconPicker(index)"
+                  class="w-12 h-12 text-2xl bg-white border border-gray-300 rounded-lg hover:bg-blue-50 hover:border-blue-300 transition flex items-center justify-center shadow-sm"
+                >
+                  {{ block.icon || '📌' }}
+                </button>
+              </div>
+
+              <div class="col-span-10">
+                <label class="text-xs text-gray-500 uppercase font-bold">Block Title</label>
+                <input
+                  v-model="block.title"
+                  type="text"
+                  placeholder="e.g. Safety First"
+                  class="w-full mt-1 border rounded p-2 focus:ring-black focus:border-black"
+                />
+              </div>
+
+              <div class="col-span-12">
+                <label class="text-xs text-gray-500 uppercase font-bold">
+                  Content <span class="text-gray-400 font-normal lowercase">(Ctrl+B, Ctrl+U)</span>
+                </label>
+                <textarea
+                  v-model="block.content"
+                  @keydown="(e) => handleContentKeydown(e, index)"
+                  rows="2"
+                  placeholder="Details..."
+                  class="w-full mt-1 border rounded p-2 text-sm focus:ring-black focus:border-black font-mono"
+                ></textarea>
+              </div>
+
+              <div class="col-span-12 pt-2 border-t border-gray-100">
+                <label class="text-xs text-gray-500 uppercase font-bold mb-2 block">Block Image (Optional)</label>
+
+                <div v-if="block.image" class="relative inline-block group">
+                  <img
+                    :src="block.image"
+                    class="h-32 w-auto rounded-lg border border-gray-200 shadow-sm object-cover"
+                  />
+                  <button
+                    @click="block.image = null"
+                    class="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center shadow-md hover:bg-red-600 font-bold"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div v-else>
+                  <label class="cursor-pointer flex items-center gap-2 text-sm text-blue-600 font-bold hover:bg-blue-50 w-fit px-3 py-2 rounded-md transition">
+                    <span>📷 Add Picture</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      class="hidden"
+                      @change="(e) => handleBlockImageUpload(e, index)"
+                    />
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <button
+              @click="infoBlocks.splice(index, 1)"
+              class="absolute top-2 right-2 text-gray-300 hover:text-red-500 transition font-bold"
+            >
+              ✕
+            </button>
+          </div>
+
           <button
             @click="addInfoBlock"
             class="flex items-center gap-2 text-sm text-black font-bold hover:opacity-70 mt-2"
           >
-            <span
-              class="bg-black text-white rounded-full w-5 h-5 flex items-center justify-center text-xs"
-              >+</span
-            >
+            <span class="bg-black text-white rounded-full w-5 h-5 flex items-center justify-center text-xs">+</span>
             Add Info Block
           </button>
         </div>
@@ -927,6 +1010,42 @@ const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) =>
       </div>
     </div>
   </div>
+  <div
+      v-if="showIconPicker"
+      class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+    >
+      <div
+        class="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[80vh]"
+      >
+        <div class="p-4 border-b flex justify-between items-center bg-gray-50">
+          <h3 class="font-bold text-gray-800">Select an Icon</h3>
+          <button
+            @click="showIconPicker = false"
+            class="text-gray-400 hover:text-black font-bold px-2 text-xl"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div class="p-6 overflow-y-auto">
+          <div v-for="cat in iconLibrary" :key="cat.category" class="mb-6 last:mb-0">
+            <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">
+              {{ cat.category }}
+            </h4>
+            <div class="flex flex-wrap gap-2">
+              <button
+                v-for="icon in cat.icons"
+                :key="icon"
+                @click="selectIcon(icon)"
+                class="text-2xl h-10 w-10 flex items-center justify-center rounded hover:bg-blue-100 hover:scale-110 transition cursor-pointer"
+              >
+                {{ icon }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
 </template>
 
 <style scoped>

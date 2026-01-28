@@ -1,12 +1,12 @@
 import { ref } from 'vue'
 import { supabase } from '../supabase'
 
-// 1. GLOBAL STATE (Shared by all components)
+// GLOBAL STATE
 const user = ref(null)
-const userRole = ref('user') // Default to 'user' so it's not null
+const userRole = ref('user') 
 const loading = ref(true)
 
-// 2. HELPER: Fetch Role from Database
+// Helper: Fetch Role
 const fetchRole = async (userId) => {
   if (!userId) return 'user'
   const { data } = await supabase
@@ -17,12 +17,11 @@ const fetchRole = async (userId) => {
   return data?.role || 'user'
 }
 
-// 3. INITIALIZATION: Run immediately to get current session
-// This fixes the "blocked data" issue by ensuring we check right away
+// Helper: Initialize
 const initAuth = async () => {
   loading.value = true
   const { data: { session } } = await supabase.auth.getSession()
-
+  
   if (session?.user) {
     user.value = session.user
     userRole.value = await fetchRole(session.user.id)
@@ -33,13 +32,10 @@ const initAuth = async () => {
   loading.value = false
 }
 
-// 4. LISTENER: Watch for Sign In / Sign Out events
-// This fixes the "Navbar not updating" issue
+// Listener for background changes
 supabase.auth.onAuthStateChange(async (event, session) => {
-  // If the session changes (Login/Logout), update global state
   if (session?.user) {
     user.value = session.user
-    // Only fetch role if we don't have it or if it's a new user
     if (user.value.id !== session.user.id || !userRole.value) {
       userRole.value = await fetchRole(session.user.id)
     }
@@ -47,19 +43,17 @@ supabase.auth.onAuthStateChange(async (event, session) => {
     user.value = null
     userRole.value = 'user'
   }
-  loading.value = false
 })
 
-// Run init immediately
+// Initialize immediately
 initAuth()
 
 export function useAuth() {
-
-  // We expose the global refs
+  
+  // Explicit Login Function
   const login = async (email, password) => {
     loading.value = true
     
-    // 1. Perform Login
     const { data, error } = await supabase.auth.signInWithPassword({ 
       email, 
       password 
@@ -70,7 +64,6 @@ export function useAuth() {
       return { error }
     }
 
-    // 2. Force Fetch Role immediately (Await this!)
     if (data.user) {
       user.value = data.user
       userRole.value = await fetchRole(data.user.id)
@@ -80,14 +73,17 @@ export function useAuth() {
     return { user: data.user, error: null }
   }
 
+  // Helpers
   const isAdmin = () => userRole.value === 'admin'
+  const currentUserId = () => user.value?.id // 👈 RESTORED THIS FUNCTION
 
   return {
     user,
     userRole,
     loading,
     isAdmin,
-    login, // Export the new function
+    currentUserId, // 👈 EXPORTED AGAIN
+    login,
     fetchUser: initAuth
   }
 }
