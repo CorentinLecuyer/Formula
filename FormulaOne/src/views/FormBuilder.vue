@@ -4,25 +4,193 @@ import { useRoute } from 'vue-router'
 import { supabase } from '../supabase'
 import FormRenderer from '../components/FormRenderer.vue'
 import FormPresentation from '../components/FormPresentation.vue'
+import jsPDF from 'jspdf'
+import autoTable from 'jspdf-autotable'
 
 const route = useRoute()
 const slugFromUrl = route.params.slug
 const submissionId = ref(route.query.submissionId || null)
 
+// STATE
 const formTitle = ref('')
 const formSchema = ref([])
 const formData = ref({})
 const formId = ref(null)
 const formDescription = ref('')
 const formInfoBlocks = ref([])
+// 🟢 FIX: Added missing variable declaration
+const formEmailConfig = ref(null)
+const currentUserEmail = ref('')
 
 const loading = ref(true)
 const submitting = ref(false)
 const submitted = ref(false)
 const validationErrors = ref([])
+const getBase64FromUrl = async (url) => {
+  if (!url) return null
+  if (url.startsWith('data:')) return url // Already Base64
+  try {
+    const response = await fetch(url)
+    const blob = await response.blob()
+    return new Promise((resolve) => {
+      const reader = new FileReader()
+      reader.onloadend = () => resolve(reader.result)
+      reader.readAsDataURL(blob)
+    })
+  } catch (e) {
+    console.warn('PDF Image Load Failed:', url)
+    return null
+  }
+}
+
+// --- 1. GENERATE PDF (Updated for Tables & Images) ---
+const generatePDFBase64 = async () => {
+  const doc = new jsPDF()
+  let yPos = 20
+
+  // A. HEADER
+  doc.setFontSize(18)
+  doc.text(formTitle.value, 14, yPos)
+  yPos += 10
+  doc.setFontSize(10)
+  doc.text(`Submitted by: ${currentUserEmail.value || 'Anonymous'}`, 14, yPos)
+  yPos += 6
+  doc.text(`Date: ${new Date().toLocaleDateString()}`, 14, yPos)
+  yPos += 10
+
+  // B. PREPARE DATA
+  const generalFields = []
+  const customTables = []
+  let signatureUrl = null
+
+  // Group fields
+  for (const field of formSchema.value) {
+    const val = formData.value[field.id]
+
+    if (field.type === 'signature') {
+      signatureUrl = val
+    } else if (field.type === 'table') {
+      customTables.push({ field, rows: val || [] })
+    } else if (!field.is_partner) {
+      // Format simple values
+      let displayVal = val
+      if (typeof val === 'object' && val !== null) {
+        displayVal = val.name || JSON.stringify(val)
+      }
+      generalFields.push([field.label, displayVal || '-'])
+    }
+  }
+
+  // C. DRAW GENERAL INFO TABLE
+  if (generalFields.length > 0) {
+    autoTable(doc, {
+      startY: yPos,
+      head: [['Question', 'Response']],
+      body: generalFields,
+      theme: 'striped',
+      headStyles: { fillColor: [0, 0, 0] },
+      didDrawPage: (d) => {
+        yPos = d.cursor.y
+      }, // Update Y position
+    })
+    yPos = doc.lastAutoTable.finalY + 10
+  }
+
+  // D. DRAW CUSTOM TABLES (With Images)
+  for (const { field, rows } of customTables) {
+    if (rows.length === 0) continue
+
+    // Check for page break
+    if (yPos + 20 > doc.internal.pageSize.height) {
+      doc.addPage()
+      yPos = 20
+    }
+
+    // Table Title
+    doc.setFontSize(14)
+    doc.text(field.label, 14, yPos)
+    yPos += 5
+
+    // Prepare Columns & Body
+    const columns = field.columns.map((c) => c.label)
+    const body = []
+    const imagesToDraw = [] // Store { r, c, base64 }
+
+    for (let r = 0; r < rows.length; r++) {
+      const rowData = []
+      for (let c = 0; c < field.columns.length; c++) {
+        const col = field.columns[c]
+        const cellVal = rows[r][col.id]
+
+        if (col.type === 'image' && cellVal) {
+          // Placeholder text, store image for drawing later
+          const base64 = await getBase64FromUrl(cellVal)
+          if (base64) imagesToDraw.push({ r, c, base64 })
+          rowData.push('')
+        } else {
+          rowData.push(cellVal || '')
+        }
+      }
+      body.push(rowData)
+    }
+
+    // Render Table
+    autoTable(doc, {
+      startY: yPos,
+      head: [columns],
+      body: body,
+      theme: 'grid',
+      headStyles: { fillColor: [220, 220, 220], textColor: 0 },
+      minCellHeight: 15, // Force height for images
+      didDrawCell: (data) => {
+        if (data.section === 'body') {
+          // Check if we have an image for this cell
+          const img = imagesToDraw.find((i) => i.r === data.row.index && i.c === data.column.index)
+          if (img) {
+            // Draw image inside cell padding
+            const padding = 2
+            const dim = data.cell.height - padding * 2
+            doc.addImage(img.base64, 'JPEG', data.cell.x + padding, data.cell.y + padding, dim, dim)
+          }
+        }
+      },
+    })
+    yPos = doc.lastAutoTable.finalY + 10
+  }
+
+  // E. DRAW SIGNATURE (At Bottom)
+  if (signatureUrl) {
+    // Check space
+    if (yPos + 40 > doc.internal.pageSize.height) {
+      doc.addPage()
+      yPos = 20
+    }
+
+    doc.setFontSize(12)
+    doc.text('Signature:', 14, yPos)
+    yPos += 5
+
+    const sigBase64 = await getBase64FromUrl(signatureUrl)
+    if (sigBase64) {
+      doc.addImage(sigBase64, 'PNG', 14, yPos, 60, 30)
+    } else {
+      doc.setFontSize(10)
+      doc.setTextColor(150)
+      doc.text('(Signature image could not be loaded)', 14, yPos + 10)
+    }
+  }
+
+  // Return base64 string
+  return doc.output('datauristring').split(',')[1]
+}
 
 const fetchForm = async () => {
   loading.value = true
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  currentUserEmail.value = user?.email || ''
 
   const { data, error } = await supabase.from('forms').select('*').eq('slug', slugFromUrl).single()
 
@@ -37,15 +205,21 @@ const fetchForm = async () => {
   formId.value = data.id
   formDescription.value = data.description
   formInfoBlocks.value = data.info_blocks
+  formEmailConfig.value = data.email_config
 
   const initialData = {}
   data.schema.forEach((field) => {
-    if (['poc_select', 'manager_select'].includes(field.type)) {
+    if (['poc_select', 'manager_select', 'depot_select', 't1_select'].includes(field.type)) {
       initialData[field.id] = null
     } else if (field.type === 'table') {
       initialData[field.id] = field.rows ? JSON.parse(JSON.stringify(field.rows)) : []
     } else {
-      initialData[field.id] = ''
+      // 📧 AUTO-FILL LOGIC
+      if (field.type === 'email' && field.validation?.autoFillUser) {
+        initialData[field.id] = currentUserEmail.value
+      } else {
+        initialData[field.id] = ''
+      }
     }
   })
 
@@ -91,74 +265,67 @@ const validateForm = () => {
 
     if (!val && val !== 0) return
 
+    if (field.type === 'email') {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+      if (!emailRegex.test(val)) {
+        validationErrors.value.push(`"${field.label}": Please enter a valid email address.`)
+      }
+    }
+
     // 2. TEXT RULES
     if (field.type === 'text') {
-      if (rules.minLength && val.length < rules.minLength) {
+      if (rules.minLength && val.length < rules.minLength)
         validationErrors.value.push(
           `"${field.label}": Minimum ${rules.minLength} characters required.`,
         )
-      }
-      if (rules.maxLength && val.length > rules.maxLength) {
+      if (rules.maxLength && val.length > rules.maxLength)
         validationErrors.value.push(
           `"${field.label}": Maximum ${rules.maxLength} characters allowed.`,
         )
-      }
     }
 
     // 3. NUMBER RULES
     if (field.type === 'number') {
-      if (rules.min !== null && Number(val) < rules.min) {
+      if (rules.min !== null && Number(val) < rules.min)
         validationErrors.value.push(`"${field.label}": Value must be at least ${rules.min}.`)
-      }
-      if (rules.max !== null && Number(val) > rules.max) {
+      if (rules.max !== null && Number(val) > rules.max)
         validationErrors.value.push(`"${field.label}": Value must be at most ${rules.max}.`)
-      }
     }
 
     // 4. MULTI-SELECT RULES
     if (field.type === 'select' && Array.isArray(val)) {
-      if (rules.minSelect && val.length < rules.minSelect) {
+      if (rules.minSelect && val.length < rules.minSelect)
         validationErrors.value.push(
           `"${field.label}": Please select at least ${rules.minSelect} options.`,
         )
-      }
-      if (rules.maxSelect && val.length > rules.maxSelect) {
+      if (rules.maxSelect && val.length > rules.maxSelect)
         validationErrors.value.push(
           `"${field.label}": Please select at most ${rules.maxSelect} options.`,
         )
-      }
     }
 
-    // 5. TABLE VALIDATION (Improved)
+    // 5. TABLE VALIDATION
     if (field.type === 'table') {
       const rows = val || []
-
-      // Helper to identify row (First Text Column OR Row Number)
       const getRowLabel = (row, idx) => {
         const textCol = field.columns.find((c) => c.type === 'text')
         return textCol && row[textCol.id] ? `"${row[textCol.id]}"` : `Row ${idx + 1}`
       }
 
-      // A. Check Column Rules
       field.columns.forEach((col) => {
         if (col.locked) return
-
         rows.forEach((row, rIdx) => {
           let cellVal = row[col.id]
           const colRules = col.validation || {}
 
-          // 🧠 SMART EMPTY HANDLING: Treat Empty Numbers as 0
           if (
             col.type === 'number' &&
             (cellVal === '' || cellVal === null || cellVal === undefined)
           ) {
             cellVal = 0
-            // Update the data so it saves as 0
             row[col.id] = 0
           }
 
-          // Column Required Check
-          // (If it was empty number, it is now 0, so this passes)
           if (col.required && (cellVal === '' || cellVal === null || cellVal === undefined)) {
             validationErrors.value.push(
               `Table "${field.label}" (${getRowLabel(row, rIdx)}): "${col.label}" is required.`,
@@ -167,7 +334,6 @@ const validateForm = () => {
 
           if (cellVal === '' || cellVal === null || cellVal === undefined) return
 
-          // Column Text Rules
           if (col.type === 'text') {
             if (colRules.minLength && cellVal.length < colRules.minLength)
               validationErrors.value.push(
@@ -178,7 +344,6 @@ const validateForm = () => {
                 `Table "${field.label}" (${getRowLabel(row, rIdx)}): "${col.label}" too long.`,
               )
           }
-          // Column Number Rules
           if (col.type === 'number') {
             if (colRules.min !== null && Number(cellVal) < colRules.min)
               validationErrors.value.push(
@@ -192,22 +357,18 @@ const validateForm = () => {
         })
       })
 
-      // B. Check Table Sum
       if (rules.sumColumnId) {
         const targetCol = field.columns.find((c) => c.id === rules.sumColumnId)
         if (targetCol) {
           const total = rows.reduce((sum, row) => sum + (Number(row[rules.sumColumnId]) || 0), 0)
-
-          if (rules.minSum !== null && total < rules.minSum) {
+          if (rules.minSum !== null && total < rules.minSum)
             validationErrors.value.push(
               `"${field.label}": Total ${targetCol.label} is ${total} (Min: ${rules.minSum}).`,
             )
-          }
-          if (rules.maxSum !== null && total > rules.maxSum) {
+          if (rules.maxSum !== null && total > rules.maxSum)
             validationErrors.value.push(
               `"${field.label}": Total ${targetCol.label} is ${total} (Max: ${rules.maxSum}).`,
             )
-          }
         }
       }
     }
@@ -221,33 +382,61 @@ const submitForm = async () => {
     window.scrollTo({ top: 0, behavior: 'smooth' })
     return
   }
-
   submitting.value = true
+
+  // 1. Save to DB
+  const payload = { form_id: formId.value, response_data: formData.value }
   let error = null
 
   if (submissionId.value) {
-    const { error: updateError } = await supabase
+    const { error: uErr } = await supabase
       .from('submissions')
       .update({ response_data: formData.value })
       .eq('id', submissionId.value)
-    error = updateError
+    error = uErr
   } else {
-    const { error: insertError } = await supabase.from('submissions').insert({
-      form_id: formId.value,
-      response_data: formData.value,
-    })
-    error = insertError
+    const { error: iErr } = await supabase.from('submissions').insert(payload)
+    error = iErr
   }
 
   if (error) {
-    alert('Error saving form: ' + error.message)
-  } else {
-    submitted.value = true
-    window.scrollTo({ top: 0, behavior: 'smooth' })
+    alert('Error: ' + error.message)
+    submitting.value = false
+    return
   }
+
+  // 2. Send Email
+  const config = formEmailConfig.value
+  let recipients = []
+  formSchema.value.forEach((field) => {
+    if (field.type === 'email' && formData.value[field.id]) {
+      recipients.push(formData.value[field.id])
+    }
+  })
+
+  if (recipients.length > 0 && config?.enabled) {
+    try {
+      // 🟢 AWAIT the PDF generation now (it's async due to image fetching)
+      const pdfBase64 = await generatePDFBase64()
+
+      await supabase.functions.invoke('send-email', {
+        body: {
+          to: recipients.join(','),
+          subject: config.subject || `New Submission: ${formTitle.value}`,
+          text: config.body || 'Please find attached the submission PDF.',
+          pdfBase64: pdfBase64,
+          filename: `${formTitle.value.replace(/[^a-z0-9]/gi, '_')}.pdf`,
+        },
+      })
+    } catch (emailErr) {
+      console.error('Email failed:', emailErr)
+    }
+  }
+
+  submitted.value = true
+  window.scrollTo({ top: 0, behavior: 'smooth' })
   submitting.value = false
 }
-
 onMounted(() => {
   fetchForm()
 })

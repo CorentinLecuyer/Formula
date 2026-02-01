@@ -19,23 +19,23 @@ const emit = defineEmits(['update:modelValue'])
 const getFieldValue = (field) => {
   const mainValue = props.modelValue[field.id]
 
-  // CASE 0: TABLE
+  // 1. Table
   if (field.type === 'table') {
     return Array.isArray(mainValue) ? mainValue : []
   }
 
-  // If missing/empty, return empty string for inputs
-  if (mainValue === undefined || mainValue === null) return ''
-
-  // CASE 1: DEPOT
-  if (field.type === 'depot_select') {
-    return {
-      name: mainValue,
-      number: props.modelValue[`${field.id}_ship_to_number`],
-    }
+  // 2. Complex Fields (Return NULL if empty, not string)
+  if (['depot_select', 'poc_select', 't1_select'].includes(field.type)) {
+    if (mainValue === undefined || mainValue === null || mainValue === '') return null
   }
 
-  // CASE 2: POC
+  // 3. Simple Fields
+  if (mainValue === undefined || mainValue === null) return ''
+
+  // 4. Construct Complex Objects if value exists
+  if (field.type === 'depot_select') {
+    return { name: mainValue, number: props.modelValue[`${field.id}_ship_to_number`] }
+  }
   if (field.type === 'poc_select') {
     return {
       name: mainValue,
@@ -43,16 +43,10 @@ const getFieldValue = (field) => {
       id: props.modelValue[`${field.id}_id`] || null,
     }
   }
-
-  // CASE 3: T1 SELECT
   if (field.type === 't1_select') {
-    return {
-      t1: mainValue,
-      t2: props.modelValue[`${field.id}_manager_name`],
-    }
+    return { t1: mainValue, t2: props.modelValue[`${field.id}_manager_name`] }
   }
 
-  // STANDARD CASE
   return mainValue
 }
 
@@ -204,6 +198,22 @@ const handleUserImageUpload = async (event, fieldId, rowIndex, colId, fieldValid
         >
           No data available for this table.
         </div>
+      </div>
+
+      <div v-else-if="field.type === 'email'" class="mb-6">
+        <label class="block text-sm font-bold text-gray-700 mb-2">
+          {{ field.label }} <span v-if="field.required" class="text-red-500">*</span>
+        </label>
+        <input
+          type="email"
+          :value="modelValue[field.id]"
+          @input="$emit('update:modelValue', { ...modelValue, [field.id]: $event.target.value })"
+          class="w-full border border-gray-300 rounded-lg p-3 focus:ring-black focus:border-black transition"
+          placeholder="name@company.com"
+        />
+        <p v-if="field.validation?.autoFillUser" class="text-xs text-gray-400 mt-1">
+          Auto-filled with your account email.
+        </p>
       </div>
 
       <DynamicField

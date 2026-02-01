@@ -16,10 +16,15 @@ const formId = ref(null)
 const currentUser = ref(null)
 
 // 1. Form Metadata
-const status = ref('draft') // Default is draft
+const status = ref('draft')
 const title = ref('')
 const description = ref('')
 const infoBlocks = ref([])
+const emailConfig = ref({
+  enabled: true,
+  subject: 'Copy of your submission: [Form Title]',
+  body: 'Hello,\n\nThanks for participating. Please find attached a PDF version of the form you just filled in.\n\nCheers,\nThe Team',
+})
 
 // 2. Fields List
 const fields = ref([])
@@ -27,6 +32,10 @@ const fields = ref([])
 // STATE FOR ICON PICKER
 const showIconPicker = ref(false)
 const activeBlockIndex = ref(null)
+
+// STATE FOR DRAG & DROP
+const dragIndex = ref(null)
+const isDragHandleHovered = ref(false)
 
 const iconLibrary = [
   { category: 'Status', icons: ['ℹ️', '⚠️', '✅', '❌', '❓', '❗', '🎨', '🆗'] },
@@ -64,11 +73,14 @@ const loadFormForEdit = async (slug) => {
   status.value = data.status
   infoBlocks.value = data.info_blocks || []
 
-  // 🛡️ DATA MIGRATION: Fix old schemas that lack validation objects
-  const rawSchema = data.schema || []
+  if (data.email_config) {
+    emailConfig.value = data.email_config
+  } else {
+    emailConfig.value.subject = `Copy of your submission: ${data.title}`
+  }
 
+  const rawSchema = data.schema || []
   rawSchema.forEach((field) => {
-    // 1. Ensure top-level validation object exists
     if (!field.validation) {
       field.validation = {
         minLength: null,
@@ -82,23 +94,19 @@ const loadFormForEdit = async (slug) => {
         sumColumnId: '',
         minSum: null,
         maxSum: null,
+        autoFillUser: false,
       }
     }
-
-    // 2. Ensure nested Table Columns have validation objects
     if (field.type === 'table' && Array.isArray(field.columns)) {
       field.columns.forEach((col) => {
-        if (!col.validation) {
+        if (!col.validation)
           col.validation = { minLength: null, maxLength: null, min: null, max: null }
-        }
-        // Also ensure 'required' flag exists
         if (col.required === undefined) col.required = false
       })
     }
   })
 
   fields.value = rawSchema.filter((field) => !field.is_partner)
-
   isLoading.value = false
 }
 
@@ -107,27 +115,29 @@ const openIconPicker = (index) => {
   activeBlockIndex.value = index
   showIconPicker.value = true
 }
-
 const selectIcon = (icon) => {
-  if (activeBlockIndex.value !== null) {
-    infoBlocks.value[activeBlockIndex.value].icon = icon
-  }
+  if (activeBlockIndex.value !== null) infoBlocks.value[activeBlockIndex.value].icon = icon
   showIconPicker.value = false
   activeBlockIndex.value = null
 }
-
 const addInfoBlock = () => {
   infoBlocks.value.push({ icon: 'ℹ️', title: '', content: '' })
 }
 
 const addField = (type) => {
+  if (type === 'email') {
+    const emailCount = fields.value.filter((f) => f.type === 'email').length
+    if (emailCount >= 6) {
+      toast.warning('Maximum 6 email fields allowed.')
+      return
+    }
+  }
   const newField = {
     id: crypto.randomUUID(),
     type: type,
     label: '',
     required: false,
     options: [],
-    // Validation Object
     validation: {
       minLength: null,
       maxLength: null,
@@ -137,14 +147,13 @@ const addField = (type) => {
       minSelect: null,
       maxSelect: null,
       maxFileSize: 5,
-      // Table Specific
       sumColumnId: '',
       minSum: null,
       maxSum: null,
+      autoFillUser: false,
     },
   }
 
-  // Initial Setup for Table Type
   if (type === 'table') {
     newField.columns = [
       {
@@ -152,7 +161,7 @@ const addField = (type) => {
         label: 'Item',
         type: 'text',
         locked: true,
-        required: false, // New: Column Level Required
+        required: false,
         validation: { minLength: null, maxLength: null },
       },
       {
@@ -160,7 +169,7 @@ const addField = (type) => {
         label: 'Quantity',
         type: 'number',
         locked: false,
-        required: true, // Example: Quantity usually required
+        required: true,
         validation: { min: null, max: null },
       },
     ]
@@ -183,16 +192,13 @@ const addTableColumn = (fieldIndex) => {
     label: 'New Col',
     type: 'text',
     locked: false,
-    required: false, // New col default
+    required: false,
     validation: {},
   })
-
-  // Update existing rows
   field.rows.forEach((row) => {
     row[newColId] = ''
   })
 }
-
 const removeTableColumn = (fieldIndex, colIndex) => {
   const field = fields.value[fieldIndex]
   if (field.columns.length <= 2) {
@@ -201,12 +207,10 @@ const removeTableColumn = (fieldIndex, colIndex) => {
   }
   const colIdToRemove = field.columns[colIndex].id
   field.columns.splice(colIndex, 1)
-
   field.rows.forEach((row) => {
     delete row[colIdToRemove]
   })
 }
-
 const addTableRow = (fieldIndex) => {
   const field = fields.value[fieldIndex]
   const newRow = {}
@@ -215,130 +219,79 @@ const addTableRow = (fieldIndex) => {
   })
   field.rows.push(newRow)
 }
-
 const removeTableRow = (fieldIndex, rowIndex) => {
   fields.value[fieldIndex].rows.splice(rowIndex, 1)
 }
-
 const removeField = (index) => {
   fields.value.splice(index, 1)
 }
 
-// ... (Standard Helpers) ...
-const handleContentKeydown = async (event, index) => {
-  /* ... */
-}
-const handleDescriptionKeydown = async (event) => {
-  /* ... */
-}
-const applyTagToSelection = async (textarea, openTag, closeTag, updateFn) => {
-  /* ... */
-}
+// --- DRAG & DROP LOGIC ---
 const onDragStart = (event, index) => {
-  /* ... */
+  dragIndex.value = index
+  event.dataTransfer.effectAllowed = 'move'
+  // Optional: Set a custom drag image or ghost if needed
 }
+
 const onDragEnter = (index) => {
-  /* ... */
+  if (dragIndex.value === null || dragIndex.value === index) return
+  // Move item in array to create visual shuffle effect
+  const itemToMove = fields.value.splice(dragIndex.value, 1)[0]
+  fields.value.splice(index, 0, itemToMove)
+  dragIndex.value = index
 }
+
 const onDragEnd = () => {
-  /* ... */
+  dragIndex.value = null
+  isDragHandleHovered.value = false
 }
-const dragIndex = ref(null)
-const isDragHandleHovered = ref(false)
 
-// ... (Save/Delete/Upload Logic) ...
-const saveForm = async () => {
-  if (!title.value) return toast.warning('Please provide a Title.')
-  isSaving.value = true
+// --- TEXT FORMATTING LOGIC ---
+const handleContentKeydown = async (event, index) => {
+  if (!event.ctrlKey && !event.metaKey) return
+  let tag = ''
+  if (event.key === 'b') tag = 'b'
+  else if (event.key === 'u') tag = 'u'
+  else if (event.key === 'i') tag = 'i'
 
-  let finalSlug = route.params.slug
-  if (!isEditing.value) {
-    finalSlug = title.value
-      .toLowerCase()
-      .trim()
-      .replace(/[^\w\s-]/g, '')
-      .replace(/[\s_-]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-  }
-
-  const finalSchema = []
-  fields.value.forEach((field) => {
-    if (field.type === 'select' && Array.isArray(field.options)) {
-      field.options = field.options.filter((opt) => opt.trim().length > 0)
-    }
-    finalSchema.push(field)
-
-    // Partner fields
-    if (field.type === 'depot_select') {
-      finalSchema.push({
-        id: field.id + '_ship_to_number',
-        type: 'text',
-        label: 'Depot ID',
-        required: false,
-        readOnly: true,
-        is_partner: true,
-      })
-    } else if (field.type === 'poc_select') {
-      finalSchema.push({
-        id: field.id + '_sap_id',
-        type: 'text',
-        label: 'POC ID',
-        required: false,
-        readOnly: true,
-        is_partner: true,
-      })
-    } else if (field.type === 't1_select') {
-      finalSchema.push({
-        id: field.id + '_manager_name',
-        type: 'text',
-        label: 'T2 Manager',
-        required: false,
-        readOnly: true,
-        is_partner: true,
-      })
-    }
-  })
-
-  const payload = {
-    title: title.value,
-    slug: finalSlug,
-    description: description.value,
-    info_blocks: infoBlocks.value,
-    schema: finalSchema,
-    status: status.value,
-    created_by: currentUser.value?.id,
-  }
-
-  let dbError = null
-  if (isEditing.value) {
-    const res = await supabase.from('forms').update(payload).eq('id', formId.value)
-    dbError = res.error
-  } else {
-    const res = await supabase.from('forms').insert(payload)
-    dbError = res.error
-  }
-
-  isSaving.value = false
-  if (dbError) {
-    toast.error('Error saving: ' + dbError.message)
-  } else {
-    toast.success(isEditing.value ? 'Form updated!' : 'Form created!')
-    router.push('/')
+  if (tag) {
+    event.preventDefault()
+    applyTagToSelection(
+      event.target,
+      `<${tag}>`,
+      `</${tag}>`,
+      (val) => (infoBlocks.value[index].content = val),
+    )
   }
 }
 
-const deleteForm = async () => {
-  if (!confirm('Are you sure?')) return
-  isSaving.value = true
-  await supabase.from('submissions').delete().eq('form_id', formId.value)
-  const { error } = await supabase.from('forms').delete().eq('id', formId.value)
-  if (error) {
-    toast.error('Error deleting!')
-  } else {
-    router.push('/')
+const handleDescriptionKeydown = async (event) => {
+  if (!event.ctrlKey && !event.metaKey) return
+  let tag = ''
+  if (event.key === 'b') tag = 'b'
+  else if (event.key === 'u') tag = 'u'
+  else if (event.key === 'i') tag = 'i'
+
+  if (tag) {
+    event.preventDefault()
+    applyTagToSelection(event.target, `<${tag}>`, `</${tag}>`, (val) => (description.value = val))
   }
 }
 
+const applyTagToSelection = async (textarea, openTag, closeTag, updateFn) => {
+  const start = textarea.selectionStart
+  const end = textarea.selectionEnd
+  const text = textarea.value
+  const before = text.substring(0, start)
+  const selected = text.substring(start, end)
+  const after = text.substring(end)
+  updateFn(before + openTag + selected + closeTag + after)
+  await nextTick()
+  textarea.focus()
+  textarea.setSelectionRange(start + openTag.length, end + openTag.length)
+}
+
+// --- IMAGE UPLOAD LOGIC ---
 const compressImage = async (file) => {
   return new Promise((resolve) => {
     const reader = new FileReader()
@@ -408,6 +361,98 @@ const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) =>
     alert('Upload failed: ' + e.message)
   }
 }
+
+// --- SAVE ---
+const saveForm = async () => {
+  if (!title.value) return toast.warning('Please provide a Title.')
+  isSaving.value = true
+
+  let finalSlug = route.params.slug
+  if (!isEditing.value) {
+    finalSlug = title.value
+      .toLowerCase()
+      .trim()
+      .replace(/[^\w\s-]/g, '')
+      .replace(/[\s_-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+  }
+
+  const finalSchema = []
+  fields.value.forEach((field) => {
+    if (field.type === 'select' && Array.isArray(field.options)) {
+      field.options = field.options.filter((opt) => opt.trim().length > 0)
+    }
+    finalSchema.push(field)
+    if (field.type === 'depot_select') {
+      finalSchema.push({
+        id: field.id + '_ship_to_number',
+        type: 'text',
+        label: 'Depot ID',
+        required: false,
+        readOnly: true,
+        is_partner: true,
+      })
+    } else if (field.type === 'poc_select') {
+      finalSchema.push({
+        id: field.id + '_sap_id',
+        type: 'text',
+        label: 'POC ID',
+        required: false,
+        readOnly: true,
+        is_partner: true,
+      })
+    } else if (field.type === 't1_select') {
+      finalSchema.push({
+        id: field.id + '_manager_name',
+        type: 'text',
+        label: 'T2 Manager',
+        required: false,
+        readOnly: true,
+        is_partner: true,
+      })
+    }
+  })
+
+  const payload = {
+    title: title.value,
+    slug: finalSlug,
+    description: description.value,
+    info_blocks: infoBlocks.value,
+    schema: finalSchema,
+    status: status.value,
+    created_by: currentUser.value?.id,
+    email_config: emailConfig.value,
+  }
+
+  let dbError = null
+  if (isEditing.value) {
+    const res = await supabase.from('forms').update(payload).eq('id', formId.value)
+    dbError = res.error
+  } else {
+    const res = await supabase.from('forms').insert(payload)
+    dbError = res.error
+  }
+
+  isSaving.value = false
+  if (dbError) {
+    toast.error('Error saving: ' + dbError.message)
+  } else {
+    toast.success(isEditing.value ? 'Form updated!' : 'Form created!')
+    router.push('/')
+  }
+}
+
+const deleteForm = async () => {
+  if (!confirm('Are you sure?')) return
+  isSaving.value = true
+  await supabase.from('submissions').delete().eq('form_id', formId.value)
+  const { error } = await supabase.from('forms').delete().eq('id', formId.value)
+  if (error) {
+    toast.error('Error deleting!')
+  } else {
+    router.push('/')
+  }
+}
 </script>
 
 <template>
@@ -464,11 +509,12 @@ const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) =>
 
       <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-200 mb-8 space-y-6">
         <h2 class="text-xl font-bold border-b pb-2">Presentation & Context</h2>
-        
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">
             Introductory Summary
-            <span class="text-gray-400 font-normal lowercase">(Ctrl+B for Bold, Ctrl+U for Underline)</span>
+            <span class="text-gray-400 font-normal lowercase"
+              >(Ctrl+B for Bold, Ctrl+U for Underline)</span
+            >
           </label>
           <textarea
             v-model="description"
@@ -481,7 +527,6 @@ const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) =>
 
         <div class="space-y-4">
           <label class="block text-sm font-medium text-gray-700">Info Blocks (Optional)</label>
-
           <div
             v-for="(block, index) in infoBlocks"
             :key="index"
@@ -497,7 +542,6 @@ const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) =>
                   {{ block.icon || '📌' }}
                 </button>
               </div>
-
               <div class="col-span-10">
                 <label class="text-xs text-gray-500 uppercase font-bold">Block Title</label>
                 <input
@@ -507,11 +551,11 @@ const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) =>
                   class="w-full mt-1 border rounded p-2 focus:ring-black focus:border-black"
                 />
               </div>
-
               <div class="col-span-12">
-                <label class="text-xs text-gray-500 uppercase font-bold">
-                  Content <span class="text-gray-400 font-normal lowercase">(Ctrl+B, Ctrl+U)</span>
-                </label>
+                <label class="text-xs text-gray-500 uppercase font-bold"
+                  >Content
+                  <span class="text-gray-400 font-normal lowercase">(Ctrl+B, Ctrl+U)</span></label
+                >
                 <textarea
                   v-model="block.content"
                   @keydown="(e) => handleContentKeydown(e, index)"
@@ -520,10 +564,10 @@ const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) =>
                   class="w-full mt-1 border rounded p-2 text-sm focus:ring-black focus:border-black font-mono"
                 ></textarea>
               </div>
-
               <div class="col-span-12 pt-2 border-t border-gray-100">
-                <label class="text-xs text-gray-500 uppercase font-bold mb-2 block">Block Image (Optional)</label>
-
+                <label class="text-xs text-gray-500 uppercase font-bold mb-2 block"
+                  >Block Image (Optional)</label
+                >
                 <div v-if="block.image" class="relative inline-block group">
                   <img
                     :src="block.image"
@@ -536,9 +580,10 @@ const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) =>
                     ✕
                   </button>
                 </div>
-
                 <div v-else>
-                  <label class="cursor-pointer flex items-center gap-2 text-sm text-blue-600 font-bold hover:bg-blue-50 w-fit px-3 py-2 rounded-md transition">
+                  <label
+                    class="cursor-pointer flex items-center gap-2 text-sm text-blue-600 font-bold hover:bg-blue-50 w-fit px-3 py-2 rounded-md transition"
+                  >
                     <span>📷 Add Picture</span>
                     <input
                       type="file"
@@ -550,7 +595,6 @@ const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) =>
                 </div>
               </div>
             </div>
-
             <button
               @click="infoBlocks.splice(index, 1)"
               class="absolute top-2 right-2 text-gray-300 hover:text-red-500 transition font-bold"
@@ -558,14 +602,54 @@ const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) =>
               ✕
             </button>
           </div>
-
           <button
             @click="addInfoBlock"
             class="flex items-center gap-2 text-sm text-black font-bold hover:opacity-70 mt-2"
           >
-            <span class="bg-black text-white rounded-full w-5 h-5 flex items-center justify-center text-xs">+</span>
+            <span
+              class="bg-black text-white rounded-full w-5 h-5 flex items-center justify-center text-xs"
+              >+</span
+            >
             Add Info Block
           </button>
+        </div>
+      </div>
+
+      <div
+        class="bg-gradient-to-r from-blue-50 to-indigo-50 p-6 rounded-xl shadow-sm border border-blue-100 mb-8 space-y-6"
+      >
+        <div class="flex justify-between items-center border-b border-blue-200 pb-2">
+          <h2 class="text-xl font-bold text-blue-900">Email Automation (PDF)</h2>
+          <span class="text-xs bg-blue-200 text-blue-800 px-2 py-1 rounded-full font-bold"
+            >PDF Sent Automatically</span
+          >
+        </div>
+        <p class="text-sm text-gray-600">
+          Configure the email sent to the addresses collected in the form. The PDF copy of the
+          submission will be attached automatically.
+        </p>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div>
+            <label class="block text-xs font-bold text-gray-500 uppercase mb-1"
+              >Email Subject</label
+            >
+            <input
+              v-model="emailConfig.subject"
+              type="text"
+              class="w-full border border-gray-300 rounded-md p-2 focus:ring-blue-500 focus:border-blue-500"
+              placeholder="Copy of submission..."
+            />
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-gray-500 uppercase mb-1"
+              >Email Body Message</label
+            >
+            <textarea
+              v-model="emailConfig.body"
+              rows="4"
+              class="w-full border border-gray-300 rounded-md p-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+            ></textarea>
+          </div>
         </div>
       </div>
 
@@ -574,57 +658,62 @@ const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) =>
       >
         <button
           @click="addField('text')"
-          class="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-md text-sm font-bold shadow transition"
+          class="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-md text-sm font-bold shadow"
         >
           + Text
         </button>
         <button
           @click="addField('number')"
-          class="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-md text-sm font-bold shadow transition"
+          class="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-md text-sm font-bold shadow"
         >
           + Number
         </button>
-
         <button
-          @click="addField('signature')"
-          class="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-md text-sm font-bold shadow transition"
+          @click="addField('email')"
+          class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md text-sm font-bold shadow"
         >
-          + Signature
-        </button>
-        <button
-          @click="addField('file')"
-          class="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-md text-sm font-bold shadow transition"
-        >
-          + Attachment
+          + Email
         </button>
         <button
           @click="addField('select')"
-          class="px-4 py-2 hover:bg-orange-800 bg-orange-700 text-white rounded-md text-sm font-bold shadow transition"
+          class="px-4 py-2 bg-orange-700 hover:bg-orange-800 text-white rounded-md text-sm font-bold shadow"
         >
           + Dropdown
         </button>
         <button
           @click="addField('table')"
-          class="px-4 py-2 hover:bg-orange-800 bg-orange-700 text-white rounded-md text-sm font-bold shadow transition"
+          class="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-md text-sm font-bold shadow"
         >
           + Custom Table
+        </button>
+        <button
+          @click="addField('signature')"
+          class="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-md text-sm font-bold shadow"
+        >
+          + Signature
+        </button>
+        <button
+          @click="addField('file')"
+          class="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-md text-sm font-bold shadow"
+        >
+          + Attachment
         </button>
         <div class="w-px h-8 bg-gray-300 mx-2"></div>
         <button
           @click="addField('poc_select')"
-          class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-sm font-bold shadow transition"
+          class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-sm font-bold shadow"
         >
           + POC Search
         </button>
         <button
           @click="addField('depot_select')"
-          class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-sm font-bold shadow transition"
+          class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-sm font-bold shadow"
         >
           + Depot
         </button>
         <button
           @click="addField('t1_select')"
-          class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md text-sm font-bold shadow transition"
+          class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md text-sm font-bold shadow"
         >
           + T1 User
         </button>
@@ -634,18 +723,33 @@ const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) =>
         <div
           v-for="(field, index) in fields"
           :key="field.id"
+          :draggable="isDragHandleHovered"
+          @dragstart="onDragStart($event, index)"
+          @dragenter.prevent="onDragEnter(index)"
+          @dragover.prevent
+          @dragend="onDragEnd"
           class="bg-white p-6 rounded-lg shadow-sm border border-gray-200 flex gap-4 items-start group transition-all duration-300"
+          :class="{
+            'border-black ring-1 ring-black shadow-lg z-10 scale-[1.01]': dragIndex === index,
+          }"
         >
+          <div
+            class="text-gray-300 mt-3 cursor-move text-xl flex self-center hover:text-black transition-colors px-2"
+            @mouseenter="isDragHandleHovered = true"
+            @mouseleave="isDragHandleHovered = false"
+          >
+            ⋮⋮
+          </div>
+
           <div class="flex-grow grid grid-cols-12 gap-6">
             <div class="col-span-2">
               <label class="text-xs text-gray-500 uppercase font-bold">Type</label>
               <div
                 class="bg-gray-100 px-3 py-2 rounded text-sm font-mono mt-1 text-gray-600 border border-gray-200"
               >
-                {{ field.type }}
+                {{ field.type === 'email' ? '📧 Email' : field.type }}
               </div>
             </div>
-
             <div class="col-span-8">
               <label class="text-xs text-gray-500 uppercase font-bold">Question Label</label>
               <input
@@ -654,7 +758,6 @@ const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) =>
                 class="w-full border border-gray-300 rounded p-2 mt-1 focus:ring-black focus:border-black"
               />
             </div>
-
             <div class="col-span-2 flex flex-col items-center">
               <label class="text-xs text-gray-500 uppercase font-bold">Required?</label>
               <input
@@ -665,17 +768,35 @@ const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) =>
             </div>
 
             <div
-              v-if="field.required"
+              v-if="field.type === 'email'"
               class="col-span-12 bg-blue-50 p-3 rounded border border-blue-100 flex flex-wrap gap-4 items-center"
             >
-              <span class="text-xs font-bold text-blue-800 uppercase flex items-center gap-1">
-                🛡️ Validation Rules
-              </span>
+              <span class="text-xs font-bold text-blue-800 uppercase flex items-center gap-1"
+                >🛡️ Settings</span
+              >
+              <label
+                class="flex items-center gap-1 text-xs text-blue-700 cursor-pointer select-none bg-white px-2 py-1 rounded border border-blue-200"
+              >
+                <input type="checkbox" v-model="field.validation.autoFillUser" />
+                Auto-fill with Connected User Email?
+              </label>
+              <span class="text-[10px] text-gray-400 italic ml-2"
+                >Format: name@domain.com verified automatically</span
+              >
+            </div>
+
+            <div
+              v-if="field.required && field.type !== 'email'"
+              class="col-span-12 bg-blue-50 p-3 rounded border border-blue-100 flex flex-wrap gap-4 items-center"
+            >
+              <span class="text-xs font-bold text-blue-800 uppercase flex items-center gap-1"
+                >🛡️ Validation Rules</span
+              >
 
               <template v-if="field.type === 'text'">
                 <div class="flex items-center gap-2">
-                  <label class="text-xs text-blue-600">Min Chars</label>
-                  <input
+                  <label class="text-xs text-blue-600">Min Chars</label
+                  ><input
                     v-model="field.validation.minLength"
                     type="number"
                     class="w-16 p-1 text-xs border rounded"
@@ -683,8 +804,8 @@ const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) =>
                   />
                 </div>
                 <div class="flex items-center gap-2">
-                  <label class="text-xs text-blue-600">Max Chars</label>
-                  <input
+                  <label class="text-xs text-blue-600">Max Chars</label
+                  ><input
                     v-model="field.validation.maxLength"
                     type="number"
                     class="w-16 p-1 text-xs border rounded"
@@ -695,8 +816,8 @@ const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) =>
 
               <template v-if="field.type === 'number'">
                 <div class="flex items-center gap-2">
-                  <label class="text-xs text-blue-600">Min Value</label>
-                  <input
+                  <label class="text-xs text-blue-600">Min Value</label
+                  ><input
                     v-model="field.validation.min"
                     type="number"
                     class="w-16 p-1 text-xs border rounded"
@@ -704,8 +825,8 @@ const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) =>
                   />
                 </div>
                 <div class="flex items-center gap-2">
-                  <label class="text-xs text-blue-600">Max Value</label>
-                  <input
+                  <label class="text-xs text-blue-600">Max Value</label
+                  ><input
                     v-model="field.validation.max"
                     type="number"
                     class="w-16 p-1 text-xs border rounded"
@@ -718,21 +839,20 @@ const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) =>
                 <label
                   class="flex items-center gap-1 text-xs text-blue-700 cursor-pointer select-none bg-white px-2 py-1 rounded border border-blue-200"
                 >
-                  <input type="checkbox" v-model="field.validation.multiSelect" />
-                  Allow Multiple?
+                  <input type="checkbox" v-model="field.validation.multiSelect" /> Allow Multiple?
                 </label>
                 <template v-if="field.validation.multiSelect">
                   <div class="flex items-center gap-2">
-                    <label class="text-xs text-blue-600">Min Select</label>
-                    <input
+                    <label class="text-xs text-blue-600">Min Select</label
+                    ><input
                       v-model="field.validation.minSelect"
                       type="number"
                       class="w-14 p-1 text-xs border rounded"
                     />
                   </div>
                   <div class="flex items-center gap-2">
-                    <label class="text-xs text-blue-600">Max Select</label>
-                    <input
+                    <label class="text-xs text-blue-600">Max Select</label
+                    ><input
                       v-model="field.validation.maxSelect"
                       type="number"
                       class="w-14 p-1 text-xs border rounded"
@@ -743,8 +863,8 @@ const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) =>
 
               <template v-if="['file', 'signature'].includes(field.type)">
                 <div class="flex items-center gap-2">
-                  <label class="text-xs text-blue-600">Max File Size (MB)</label>
-                  <input
+                  <label class="text-xs text-blue-600">Max File Size (MB)</label
+                  ><input
                     v-model="field.validation.maxFileSize"
                     type="number"
                     class="w-16 p-1 text-xs border rounded"
@@ -772,16 +892,16 @@ const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) =>
                 </div>
                 <template v-if="field.validation.sumColumnId">
                   <div class="flex items-center gap-2">
-                    <label class="text-xs text-blue-600">Min Total</label>
-                    <input
+                    <label class="text-xs text-blue-600">Min Total</label
+                    ><input
                       v-model="field.validation.minSum"
                       type="number"
                       class="w-14 p-1 text-xs border rounded"
                     />
                   </div>
                   <div class="flex items-center gap-2">
-                    <label class="text-xs text-blue-600">Max Total</label>
-                    <input
+                    <label class="text-xs text-blue-600">Max Total</label
+                    ><input
                       v-model="field.validation.maxSum"
                       type="number"
                       class="w-14 p-1 text-xs border rounded"
@@ -798,7 +918,6 @@ const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) =>
               <div class="grid gap-2 mb-4">
                 <div class="flex justify-between items-center mb-2">
                   <h4 class="text-xs font-bold text-blue-800 uppercase">Column Configuration</h4>
-
                   <button
                     @click="addTableColumn(index)"
                     :disabled="field.columns.length >= 6"
@@ -823,18 +942,14 @@ const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) =>
                       <option value="number">Number</option>
                       <option value="image">Picture</option>
                     </select>
-
                     <label
                       class="flex items-center gap-1 text-xs text-blue-600 cursor-pointer border border-blue-200 px-2 py-1 rounded bg-blue-50"
+                      ><input type="checkbox" v-model="col.required" /> Required?</label
                     >
-                      <input type="checkbox" v-model="col.required" /> Required?
-                    </label>
-
                     <label
                       class="flex items-center gap-1 text-xs text-gray-600 cursor-pointer border px-2 py-1 rounded bg-gray-50"
+                      ><input type="checkbox" v-model="col.locked" /> Locked</label
                     >
-                      <input type="checkbox" v-model="col.locked" /> Locked
-                    </label>
                     <button
                       @click="removeTableColumn(index, cIdx)"
                       :disabled="field.columns.length <= 2"
@@ -843,7 +958,6 @@ const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) =>
                       ×
                     </button>
                   </div>
-
                   <div
                     v-if="!col.locked && col.type !== 'image'"
                     class="flex items-center gap-3 pl-2 border-l-2 border-gray-200"
@@ -851,11 +965,10 @@ const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) =>
                     <span class="text-[10px] text-blue-400 font-bold uppercase tracking-wide"
                       >Rules:</span
                     >
-
                     <template v-if="col.type === 'text'">
                       <div class="flex items-center gap-1">
-                        <span class="text-[10px] text-gray-500">Min Len</span>
-                        <input
+                        <span class="text-[10px] text-gray-500">Min Len</span
+                        ><input
                           v-model="col.validation.minLength"
                           type="number"
                           class="w-12 p-0.5 text-xs border rounded"
@@ -863,8 +976,8 @@ const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) =>
                         />
                       </div>
                       <div class="flex items-center gap-1">
-                        <span class="text-[10px] text-gray-500">Max Len</span>
-                        <input
+                        <span class="text-[10px] text-gray-500">Max Len</span
+                        ><input
                           v-model="col.validation.maxLength"
                           type="number"
                           class="w-12 p-0.5 text-xs border rounded"
@@ -872,11 +985,10 @@ const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) =>
                         />
                       </div>
                     </template>
-
                     <template v-if="col.type === 'number'">
                       <div class="flex items-center gap-1">
-                        <span class="text-[10px] text-gray-500">Min Val</span>
-                        <input
+                        <span class="text-[10px] text-gray-500">Min Val</span
+                        ><input
                           v-model="col.validation.min"
                           type="number"
                           class="w-12 p-0.5 text-xs border rounded"
@@ -884,8 +996,8 @@ const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) =>
                         />
                       </div>
                       <div class="flex items-center gap-1">
-                        <span class="text-[10px] text-gray-500">Max Val</span>
-                        <input
+                        <span class="text-[10px] text-gray-500">Max Val</span
+                        ><input
                           v-model="col.validation.max"
                           type="number"
                           class="w-12 p-0.5 text-xs border rounded"
@@ -896,13 +1008,11 @@ const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) =>
                   </div>
                 </div>
               </div>
-
               <div>
                 <div class="flex justify-between items-center mb-2">
                   <label class="text-xs text-gray-800 uppercase font-bold"
                     >Table Content Preview</label
-                  >
-                  <button
+                  ><button
                     @click="addTableRow(index)"
                     class="text-xs bg-gray-200 text-gray-800 px-2 py-1 rounded hover:bg-gray-300"
                   >
@@ -926,8 +1036,8 @@ const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) =>
                           :key="col.id"
                           class="p-2 border-b border-gray-100"
                         >
-                          <template v-if="col.locked">
-                            <div v-if="col.type === 'image'">
+                          <template v-if="col.locked"
+                            ><div v-if="col.type === 'image'">
                               <div v-if="row[col.id]" class="relative w-10 h-10 group">
                                 <img
                                   :src="row[col.id]"
@@ -953,8 +1063,7 @@ const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) =>
                               v-else
                               v-model="row[col.id]"
                               class="w-full border rounded p-1 text-xs bg-yellow-50"
-                            />
-                          </template>
+                          /></template>
                           <div v-else class="text-xs text-gray-400 italic text-center">
                             User Input
                           </div>
@@ -1009,8 +1118,8 @@ const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) =>
         <p class="text-sm">Click a button above to add your first question.</p>
       </div>
     </div>
-  </div>
-  <div
+
+    <div
       v-if="showIconPicker"
       class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
     >
@@ -1026,7 +1135,6 @@ const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) =>
             ✕
           </button>
         </div>
-
         <div class="p-6 overflow-y-auto">
           <div v-for="cat in iconLibrary" :key="cat.category" class="mb-6 last:mb-0">
             <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">
@@ -1046,22 +1154,20 @@ const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) =>
         </div>
       </div>
     </div>
+  </div>
 </template>
 
 <style scoped>
-/* List Transitions for Drag & Drop */
 .list-move,
 .list-enter-active,
 .list-leave-active {
   transition: all 0.3s cubic-bezier(0.25, 1, 0.5, 1);
 }
-
 .list-enter-from,
 .list-leave-to {
   opacity: 0;
   transform: translateX(30px);
 }
-
 .list-leave-active {
   position: absolute;
 }
