@@ -26,15 +26,31 @@ const loading = ref(true)
 const submitting = ref(false)
 const submitted = ref(false)
 const validationErrors = ref([])
+
 const getBase64FromUrl = async (url) => {
   if (!url) return null
-  if (url.startsWith('data:')) return url // Already Base64
+  if (url.startsWith('data:')) return { base64: url, ratio: 1 }
+
   try {
     const response = await fetch(url)
     const blob = await response.blob()
+
     return new Promise((resolve) => {
       const reader = new FileReader()
-      reader.onloadend = () => resolve(reader.result)
+      reader.onloadend = () => {
+        const base64 = reader.result
+        const img = new Image()
+        img.onload = () => {
+          resolve({
+            base64,
+            ratio: img.width / img.height,
+            width: img.width,
+            height: img.height,
+          })
+        }
+        img.onerror = () => resolve(null)
+        img.src = base64
+      }
       reader.readAsDataURL(blob)
     })
   } catch (e) {
@@ -43,27 +59,33 @@ const getBase64FromUrl = async (url) => {
   }
 }
 
-// --- 1. GENERATE PDF (Updated for Tables & Images) ---
-const generatePDFBase64 = async () => {
+// --- 1. GENERATE PDF (Compact Rows, Scaled Images) ---
+const generatePDFBase64 = async (t1Email, t1Name) => {
   const doc = new jsPDF()
   let yPos = 20
+  const pageWidth = doc.internal.pageSize.width
+  const margin = 14
+  const maxTextWidth = pageWidth - margin * 2
 
-  // A. HEADER
+  // HEADER
   doc.setFontSize(18)
-  doc.text(formTitle.value, 14, yPos)
-  yPos += 10
+  const splitTitle = doc.splitTextToSize(formTitle.value, maxTextWidth)
+  doc.text(splitTitle, margin, yPos)
+  yPos += splitTitle.length * 8 + 4
+
+  // METADATA
   doc.setFontSize(10)
-  doc.text(`Submitted by: ${currentUserEmail.value || 'Anonymous'}`, 14, yPos)
+  const finalSubmitter = t1Email || t1Name || currentUserEmail.value || 'Anonymous'
+  doc.text(`Submitted by: ${finalSubmitter}`, margin, yPos)
   yPos += 6
-  doc.text(`Date: ${new Date().toLocaleDateString()}`, 14, yPos)
+  doc.text(`Date: ${new Date().toLocaleDateString()}`, margin, yPos)
   yPos += 10
 
-  // B. PREPARE DATA
+  // PREPARE DATA
   const generalFields = []
   const customTables = []
   let signatureUrl = null
 
-  // Group fields
   for (const field of formSchema.value) {
     const val = formData.value[field.id]
 
@@ -72,7 +94,6 @@ const generatePDFBase64 = async () => {
     } else if (field.type === 'table') {
       customTables.push({ field, rows: val || [] })
     } else if (!field.is_partner) {
-      // Format simple values
       let displayVal = val
       if (typeof val === 'object' && val !== null) {
         displayVal = val.name || JSON.stringify(val)
@@ -81,40 +102,42 @@ const generatePDFBase64 = async () => {
     }
   }
 
-  // C. DRAW GENERAL INFO TABLE
+  // DRAW GENERAL INFO
   if (generalFields.length > 0) {
     autoTable(doc, {
       startY: yPos,
       head: [['Question', 'Response']],
       body: generalFields,
       theme: 'striped',
-      headStyles: { fillColor: [0, 0, 0] },
+      headStyles: { fillColor: [40, 40, 40] },
       didDrawPage: (d) => {
         yPos = d.cursor.y
-      }, // Update Y position
+      },
     })
     yPos = doc.lastAutoTable.finalY + 10
   }
 
-  // D. DRAW CUSTOM TABLES (With Images)
+  // DRAW CUSTOM TABLES (Fixed Height Rows)
   for (const { field, rows } of customTables) {
     if (rows.length === 0) continue
 
-    // Check for page break
-    if (yPos + 20 > doc.internal.pageSize.height) {
+    if (yPos + 30 > doc.internal.pageSize.height) {
       doc.addPage()
       yPos = 20
     }
 
-    // Table Title
     doc.setFontSize(14)
-    doc.text(field.label, 14, yPos)
+    doc.setTextColor(0, 0, 0)
+    doc.text(field.label, margin, yPos)
     yPos += 5
 
-    // Prepare Columns & Body
     const columns = field.columns.map((c) => c.label)
     const body = []
-    const imagesToDraw = [] // Store { r, c, base64 }
+    const imagesToDraw = []
+
+    // 🟢 FIX 1: Set a smaller fixed height (e.g., 20)
+    const hasImages = field.columns.some((c) => c.type === 'image')
+    const rowHeight = hasImages ? 20 : 10
 
     for (let r = 0; r < rows.length; r++) {
       const rowData = []
@@ -123,9 +146,8 @@ const generatePDFBase64 = async () => {
         const cellVal = rows[r][col.id]
 
         if (col.type === 'image' && cellVal) {
-          // Placeholder text, store image for drawing later
-          const base64 = await getBase64FromUrl(cellVal)
-          if (base64) imagesToDraw.push({ r, c, base64 })
+          const imgData = await getBase64FromUrl(cellVal)
+          if (imgData) imagesToDraw.push({ r, c, ...imgData })
           rowData.push('')
         } else {
           rowData.push(cellVal || '')
@@ -134,23 +156,39 @@ const generatePDFBase64 = async () => {
       body.push(rowData)
     }
 
-    // Render Table
     autoTable(doc, {
       startY: yPos,
       head: [columns],
       body: body,
       theme: 'grid',
-      headStyles: { fillColor: [220, 220, 220], textColor: 0 },
-      minCellHeight: 15, // Force height for images
+      headStyles: { fillColor: [200, 200, 200], textColor: 0 },
+      styles: {
+        minCellHeight: rowHeight, // Apply small fixed height
+        valign: 'middle',
+      },
       didDrawCell: (data) => {
         if (data.section === 'body') {
-          // Check if we have an image for this cell
           const img = imagesToDraw.find((i) => i.r === data.row.index && i.c === data.column.index)
           if (img) {
-            // Draw image inside cell padding
-            const padding = 2
-            const dim = data.cell.height - padding * 2
-            doc.addImage(img.base64, 'JPEG', data.cell.x + padding, data.cell.y + padding, dim, dim)
+            // 🟢 FIX 2: Fit Image into the small cell while keeping ratio
+            const padding = 1 // Smaller padding for tight fit
+            const cellW = data.cell.width - padding * 2
+            const cellH = data.cell.height - padding * 2
+
+            // Calculate constrained dimensions
+            let drawW = cellW
+            let drawH = cellW / img.ratio
+
+            if (drawH > cellH) {
+              drawH = cellH
+              drawW = cellH * img.ratio
+            }
+
+            // Center image in cell
+            const x = data.cell.x + padding + (cellW - drawW) / 2
+            const y = data.cell.y + padding + (cellH - drawH) / 2
+
+            doc.addImage(img.base64, 'JPEG', x, y, drawW, drawH)
           }
         }
       },
@@ -158,35 +196,29 @@ const generatePDFBase64 = async () => {
     yPos = doc.lastAutoTable.finalY + 10
   }
 
-  // E. DRAW SIGNATURE (At Bottom)
+  // DRAW SIGNATURE
   if (signatureUrl) {
-    // Check space
     if (yPos + 40 > doc.internal.pageSize.height) {
       doc.addPage()
       yPos = 20
     }
 
     doc.setFontSize(12)
-    doc.text('Signature:', 14, yPos)
+    doc.text('Signature:', margin, yPos)
     yPos += 5
 
-    const sigBase64 = await getBase64FromUrl(signatureUrl)
-    if (sigBase64) {
-      doc.addImage(sigBase64, 'PNG', 14, yPos, 60, 30)
-    } else {
-      doc.setFontSize(10)
-      doc.setTextColor(150)
-      doc.text('(Signature image could not be loaded)', 14, yPos + 10)
+    const sigData = await getBase64FromUrl(signatureUrl)
+    if (sigData) {
+      const sigW = 60
+      const sigH = sigW / sigData.ratio
+      doc.addImage(sigData.base64, 'PNG', margin, yPos, sigW, sigH)
     }
   }
 
-  // Return base64 string
   return doc.output('datauristring').split(',')[1]
 }
-
 const fetchForm = async () => {
   loading.value = true
-
   const {
     data: { user },
   } = await supabase.auth.getUser()
@@ -214,7 +246,6 @@ const fetchForm = async () => {
     } else if (field.type === 'table') {
       initialData[field.id] = field.rows ? JSON.parse(JSON.stringify(field.rows)) : []
     } else {
-      // 📧 AUTO-FILL LOGIC
       if (field.type === 'email' && field.validation?.autoFillUser) {
         initialData[field.id] = currentUserEmail.value
       } else {
@@ -224,36 +255,26 @@ const fetchForm = async () => {
   })
 
   if (submissionId.value) {
-    const { data: subData, error: subError } = await supabase
+    const { data: subData } = await supabase
       .from('submissions')
       .select('response_data')
       .eq('id', submissionId.value)
       .single()
-
-    if (subError) {
-      console.error('Error fetching submission:', subError)
-      alert('Could not load the submission to edit.')
-    } else {
-      formData.value = { ...initialData, ...subData.response_data }
-    }
+    if (subData) formData.value = { ...initialData, ...subData.response_data }
   } else {
     formData.value = initialData
   }
-
   loading.value = false
 }
-
 // ---------------------------------------------------------
 // 🛡️ UPDATED VALIDATION LOGIC
 // ---------------------------------------------------------
 const validateForm = () => {
   validationErrors.value = []
-
   formSchema.value.forEach((field) => {
     const val = formData.value[field.id]
     const rules = field.validation || {}
 
-    // 1. STANDARD REQUIRED CHECK
     if (field.required && !field.is_partner) {
       const isEmpty =
         val === null || val === undefined || val === '' || (Array.isArray(val) && val.length === 0)
@@ -262,26 +283,18 @@ const validateForm = () => {
         return
       }
     }
-
     if (!val && val !== 0) return
-
     if (field.type === 'email') {
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-      if (!emailRegex.test(val)) {
-        validationErrors.value.push(`"${field.label}": Please enter a valid email address.`)
-      }
+      if (!emailRegex.test(val))
+        validationErrors.value.push(`"${field.label}": Invalid email format.`)
     }
-
-    // 2. TEXT RULES
+    // Simple text validation
     if (field.type === 'text') {
       if (rules.minLength && val.length < rules.minLength)
-        validationErrors.value.push(
-          `"${field.label}": Minimum ${rules.minLength} characters required.`,
-        )
+        validationErrors.value.push(`"${field.label}": Min ${rules.minLength} chars.`)
       if (rules.maxLength && val.length > rules.maxLength)
-        validationErrors.value.push(
-          `"${field.label}": Maximum ${rules.maxLength} characters allowed.`,
-        )
+        validationErrors.value.push(`"${field.label}": Max ${rules.maxLength} chars.`)
     }
 
     // 3. NUMBER RULES
@@ -384,7 +397,7 @@ const submitForm = async () => {
   }
   submitting.value = true
 
-  // 1. Save to DB
+  // A. Save to DB
   const payload = { form_id: formId.value, response_data: formData.value }
   let error = null
 
@@ -405,19 +418,50 @@ const submitForm = async () => {
     return
   }
 
-  // 2. Send Email
+  // B. Email Logic
   const config = formEmailConfig.value
   let recipients = []
+  let t1Email = null
+  let t1Name = null
+
+  // 1. Gather Standard Email Fields
   formSchema.value.forEach((field) => {
     if (field.type === 'email' && formData.value[field.id]) {
       recipients.push(formData.value[field.id])
     }
   })
 
+  // 2. FETCH EMAILS FROM 't1_users'
+  const t1Field = formSchema.value.find((f) => f.type === 't1_select')
+  if (t1Field) {
+    t1Name = formData.value[t1Field.id] // The full_name selected
+
+    if (t1Name) {
+      // 🟢 FIX: Query 't1_users' and match 'full_name'
+      const { data: t1Data, error: t1Err } = await supabase
+        .from('t1_users') // Correct Table Name
+        .select('email') // Only select columns that exist
+        .eq('full_name', t1Name) // Match full_name
+        .single()
+
+      if (!t1Err && t1Data) {
+        if (t1Data.email) {
+          t1Email = t1Data.email
+          recipients.push(t1Data.email)
+        }
+      } else {
+        console.warn('Could not find T1 user in database:', t1Name, t1Err)
+      }
+    }
+  }
+
+  // Remove duplicates
+  recipients = [...new Set(recipients)]
+
   if (recipients.length > 0 && config?.enabled) {
     try {
-      // 🟢 AWAIT the PDF generation now (it's async due to image fetching)
-      const pdfBase64 = await generatePDFBase64()
+      // 🟢 FIX: Pass t1Email and t1Name as arguments
+      const pdfBase64 = await generatePDFBase64(t1Email, t1Name)
 
       await supabase.functions.invoke('send-email', {
         body: {
