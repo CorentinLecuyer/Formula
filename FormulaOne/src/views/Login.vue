@@ -34,6 +34,7 @@ const handleResetPassword = async () => {
     return
   }
   loading.value = true
+  
   const { error } = await supabase.auth.resetPasswordForEmail(email.value)
   if (error) {
     toast.error(error.message)
