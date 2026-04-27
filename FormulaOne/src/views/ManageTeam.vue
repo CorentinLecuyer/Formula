@@ -9,12 +9,23 @@ const toast = useToast()
 
 const users = ref([])
 const loading = ref(false)
-const searchQuery = ref('') // 🔍 Search State
+const searchQuery = ref('')
+const currentUserId = ref(null)
 
 // INVITE MODAL STATE
 const showInviteModal = ref(false)
 const inviteEmail = ref('')
 const isInviting = ref(false)
+
+onMounted(async () => {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (user) {
+    currentUserId.value = user.id
+  }
+  fetchAllUsers()
+})
 
 // 1. Fetch Users
 const fetchAllUsers = async () => {
@@ -58,8 +69,8 @@ const sendInvite = async () => {
     email: inviteEmail.value,
     options: {
       // 👇 CHANGE THIS LINE: Point to the new page
-      emailRedirectTo: window.location.origin + '/set-password'
-    }
+      emailRedirectTo: window.location.origin + '/set-password',
+    },
   })
 
   if (error) {
@@ -75,6 +86,26 @@ const sendInvite = async () => {
 onMounted(() => {
   if (isAdmin()) fetchAllUsers()
 })
+
+const deleteUser = async (user) => {
+  // 1. Ask for confirmation before doing something destructive
+  if (!confirm(`Are you sure you want to PERMANENTLY remove ${user.email} from the system? This cannot be undone.`)) {
+    return
+  }
+
+  // 2. Call the secure Database Function (RPC) we just created
+  const { error } = await supabase.rpc('admin_delete_user', {
+    target_user_id: user.id
+  })
+
+  if (error) {
+    toast.error('Failed to remove user: ' + error.message)
+  } else {
+    toast.success('User permanently deleted.')
+    // 3. Remove the user from the local list so the UI updates instantly
+    users.value = users.value.filter((u) => u.id !== user.id)
+  }
+}
 </script>
 
 <template>
@@ -109,21 +140,9 @@ onMounted(() => {
       <table class="min-w-full divide-y divide-gray-200">
         <thead class="bg-gray-50">
           <tr>
-            <th
-              class="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider"
-            >
-              Email
-            </th>
-            <th
-              class="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider"
-            >
-              Role
-            </th>
-            <th
-              class="px-6 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider"
-            >
-              Actions
-            </th>
+            <th class="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Email</th>
+            <th class="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Role</th>
+            <th class="px-6 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider">Actions</th>
           </tr>
         </thead>
         <tbody class="bg-white divide-y divide-gray-200">
@@ -134,20 +153,33 @@ onMounted(() => {
             <td class="px-6 py-4 whitespace-nowrap">
               <span
                 class="px-2 py-1 inline-flex text-xs leading-5 font-bold rounded-full uppercase"
-                :class="
-                  u.role === 'admin' ? 'bg-purple-100 text-purple-800' : 'bg-gray-100 text-gray-800'
-                "
+                :class="u.role === 'admin' ? 'bg-purple-100 text-purple-800' : 'bg-gray-100 text-gray-800'"
               >
                 {{ u.role }}
               </span>
             </td>
             <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+              
               <button
-                @click="toggleRole(u)"
+                v-if="isAdmin"
+                @click="toggleRole(u)" 
                 class="text-blue-600 hover:text-blue-900 font-bold text-xs border border-blue-200 px-3 py-1 rounded hover:bg-blue-50 transition"
               >
                 {{ u.role === 'admin' ? 'Demote to User' : 'Promote to Super User' }}
               </button>
+
+              <button
+                v-if="isAdmin && u.id !== currentUserId"
+                @click="deleteUser(u)"
+                class="ml-4 text-red-600 hover:text-red-900 transition-colors font-bold text-xs border border-red-200 px-3 py-1 rounded hover:bg-red-50"
+              >
+                Remove
+              </button>
+
+              <span v-if="u.id === currentUserId" class="ml-4 text-gray-400 italic text-xs">
+                (You)
+              </span>
+
             </td>
           </tr>
 

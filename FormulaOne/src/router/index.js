@@ -5,6 +5,7 @@ import CreateForm from '@/views/CreateForm.vue'
 import FormList from '@/views/FormList.vue'
 import Login from '@/views/Login.vue'
 import ManageTeam from '@/views/ManageTeam.vue'
+import ResetPassword from '@/views/ResetPassword.vue'
 import SetPassword from '@/views/SetPassword.vue'
 
 const router = createRouter({
@@ -21,9 +22,14 @@ const router = createRouter({
       component: Login
     },
     {
-      path: '/set-password',
-      name: 'SetPassword',
+      path: '/signup',
+      name: 'Signup',
       component: SetPassword
+    },
+    {
+      path: '/reset-password',
+      name: 'ResetPassword',
+      component: ResetPassword
     },
     {
       path: '/form/:slug',

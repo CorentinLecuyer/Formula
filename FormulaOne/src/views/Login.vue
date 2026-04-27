@@ -35,11 +35,14 @@ const handleResetPassword = async () => {
   }
   loading.value = true
   
+  // Triggers the 'recovery' OTP code
   const { error } = await supabase.auth.resetPasswordForEmail(email.value)
+  
   if (error) {
     toast.error(error.message)
   } else {
-    toast.info('Check your email for the password reset link.')
+    toast.info('Check your email for the 6-digit reset code.')
+    router.push('/reset-password') // Send them to our new page
   }
   loading.value = false
 }

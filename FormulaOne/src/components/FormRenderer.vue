@@ -216,6 +216,24 @@ const handleUserImageUpload = async (event, fieldId, rowIndex, colId, fieldValid
         </p>
       </div>
 
+      <div v-else-if="field.type === 'description'" class="mb-6 p-5 bg-gray-50 border border-gray-200 rounded-lg shadow-sm">
+        <h3 v-if="field.label" class="text-lg font-bold text-gray-900 mb-2">
+          {{ field.label }}
+        </h3>
+        
+        <p v-if="field.content" class="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
+          {{ field.content }}
+        </p>
+
+        <div v-if="field.imageUrl" class="mt-4 flex justify-center">
+          <img 
+            :src="field.imageUrl" 
+            alt="Descriptive attachment" 
+            class="max-w-full max-h-[400px] object-contain rounded border border-gray-200 shadow-sm"
+          />
+        </div>
+      </div>
+
       <DynamicField
         v-else
         :field="field"

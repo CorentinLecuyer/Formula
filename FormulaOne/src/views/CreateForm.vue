@@ -124,6 +124,17 @@ const addInfoBlock = () => {
   infoBlocks.value.push({ icon: 'ℹ️', title: '', content: '' })
 }
 
+const addDescriptionBlock = () => {
+  fields.value.push({
+    id: 'desc_' + Date.now(),
+    type: 'description',
+    label: '',
+    content: '',
+    imageUrl: '',
+    is_partner: false,
+  })
+}
+
 const addField = (type) => {
   if (type === 'email') {
     const emailCount = fields.value.filter((f) => f.type === 'email').length
@@ -230,12 +241,10 @@ const removeField = (index) => {
 const onDragStart = (event, index) => {
   dragIndex.value = index
   event.dataTransfer.effectAllowed = 'move'
-  // Optional: Set a custom drag image or ghost if needed
 }
 
 const onDragEnter = (index) => {
   if (dragIndex.value === null || dragIndex.value === index) return
-  // Move item in array to create visual shuffle effect
   const itemToMove = fields.value.splice(dragIndex.value, 1)[0]
   fields.value.splice(index, 0, itemToMove)
   dragIndex.value = index
@@ -346,6 +355,18 @@ const handleBlockImageUpload = async (event, index) => {
   try {
     const url = await uploadFile(file)
     infoBlocks.value[index].image = url
+  } catch (e) {
+    alert('Upload failed: ' + e.message)
+  }
+}
+
+// NEW: Upload logic for the Description Block fields
+const handleFieldImageUpload = async (event, fieldIndex) => {
+  const file = event.target.files[0]
+  if (!file) return
+  try {
+    const url = await uploadFile(file)
+    fields.value[fieldIndex].imageUrl = url
   } catch (e) {
     alert('Upload failed: ' + e.message)
   }
@@ -660,7 +681,7 @@ const deleteForm = async () => {
           @click="addField('text')"
           class="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-md text-sm font-bold shadow"
         >
-          + Text
+          + Text input
         </button>
         <button
           @click="addField('number')"
@@ -698,6 +719,15 @@ const deleteForm = async () => {
         >
           + Attachment
         </button>
+        <div class="w-px h-8 bg-gray-300 mx-2"></div>
+
+        <button
+          @click="addDescriptionBlock"
+          class="bg-gray-100 text-gray-800 border border-gray-300 px-4 py-2 rounded-lg font-bold hover:bg-gray-200 transition"
+        >
+          + Add Text/Image Block
+        </button>
+
         <div class="w-px h-8 bg-gray-300 mx-2"></div>
         <button
           @click="addField('poc_select')"
@@ -742,361 +772,428 @@ const deleteForm = async () => {
           </div>
 
           <div class="flex-grow grid grid-cols-12 gap-6">
-            <div class="col-span-2">
-              <label class="text-xs text-gray-500 uppercase font-bold">Type</label>
-              <div
-                class="bg-gray-100 px-3 py-2 rounded text-sm font-mono mt-1 text-gray-600 border border-gray-200"
-              >
-                {{ field.type === 'email' ? '📧 Email' : field.type }}
+            <template v-if="field.type === 'description'">
+              <div class="col-span-12 space-y-4">
+                <div class="flex justify-between items-center">
+                  <h3
+                    class="text-sm font-bold text-amber-700 uppercase tracking-wider flex items-center gap-2"
+                  >
+                    <span class="text-xl">ℹ️</span> Information Block (Read-Only)
+                  </h3>
+                </div>
+
+                <div>
+                  <label class="text-xs text-gray-500 uppercase font-bold"
+                    >Block Title (Optional)</label
+                  >
+                  <input
+                    v-model="field.label"
+                    type="text"
+                    class="w-full border rounded p-2 mt-1 focus:ring-black focus:border-black"
+                    placeholder="e.g. Terms and Conditions"
+                  />
+                </div>
+
+                <div>
+                  <label class="text-xs text-gray-500 uppercase font-bold">Content Text</label>
+                  <textarea
+                    v-model="field.content"
+                    rows="4"
+                    class="w-full border rounded p-2 mt-1 focus:ring-black focus:border-black text-sm"
+                    placeholder="Add your legal mentions or instructions here..."
+                  ></textarea>
+                </div>
+
+                <div class="pt-2 border-t border-gray-100">
+                  <label class="text-xs text-gray-500 uppercase font-bold mb-2 block"
+                    >Block Image (Optional)</label
+                  >
+                  <div v-if="field.imageUrl" class="relative inline-block group">
+                    <img
+                      :src="field.imageUrl"
+                      class="h-32 w-auto rounded-lg border border-gray-200 shadow-sm object-cover"
+                    />
+                    <button
+                      @click="field.imageUrl = ''"
+                      class="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center shadow-md hover:bg-red-600 font-bold"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <div v-else>
+                    <label
+                      class="cursor-pointer flex items-center gap-2 text-sm text-blue-600 font-bold hover:bg-blue-50 w-fit px-3 py-2 rounded-md transition"
+                    >
+                      <span>📷 Upload Image</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        class="hidden"
+                        @change="(e) => handleFieldImageUpload(e, index)"
+                      />
+                    </label>
+                  </div>
+                </div>
               </div>
-            </div>
-            <div class="col-span-8">
-              <label class="text-xs text-gray-500 uppercase font-bold">Question Label</label>
-              <input
-                v-model="field.label"
-                type="text"
-                class="w-full border border-gray-300 rounded p-2 mt-1 focus:ring-black focus:border-black"
-              />
-            </div>
-            <div class="col-span-2 flex flex-col items-center">
-              <label class="text-xs text-gray-500 uppercase font-bold">Required?</label>
-              <input
-                v-model="field.required"
-                type="checkbox"
-                class="mt-3 h-5 w-5 text-black focus:ring-black border-gray-300 rounded"
-              />
-            </div>
+            </template>
 
-            <div
-              v-if="field.type === 'email'"
-              class="col-span-12 bg-blue-50 p-3 rounded border border-blue-100 flex flex-wrap gap-4 items-center"
-            >
-              <span class="text-xs font-bold text-blue-800 uppercase flex items-center gap-1"
-                >🛡️ Settings</span
-              >
-              <label
-                class="flex items-center gap-1 text-xs text-blue-700 cursor-pointer select-none bg-white px-2 py-1 rounded border border-blue-200"
-              >
-                <input type="checkbox" v-model="field.validation.autoFillUser" />
-                Auto-fill with Connected User Email?
-              </label>
-              <span class="text-[10px] text-gray-400 italic ml-2"
-                >Format: name@domain.com verified automatically</span
-              >
-            </div>
-
-            <div
-              v-if="field.required && field.type !== 'email'"
-              class="col-span-12 bg-blue-50 p-3 rounded border border-blue-100 flex flex-wrap gap-4 items-center"
-            >
-              <span class="text-xs font-bold text-blue-800 uppercase flex items-center gap-1"
-                >🛡️ Validation Rules</span
-              >
-
-              <template v-if="field.type === 'text'">
-                <div class="flex items-center gap-2">
-                  <label class="text-xs text-blue-600">Min Chars</label
-                  ><input
-                    v-model="field.validation.minLength"
-                    type="number"
-                    class="w-16 p-1 text-xs border rounded"
-                    placeholder="0"
-                  />
+            <template v-else>
+              <div class="col-span-2">
+                <label class="text-xs text-gray-500 uppercase font-bold">Type</label>
+                <div
+                  class="bg-gray-100 px-3 py-2 rounded text-sm font-mono mt-1 text-gray-600 border border-gray-200"
+                >
+                  {{ field.type === 'email' ? '📧 Email' : field.type }}
                 </div>
-                <div class="flex items-center gap-2">
-                  <label class="text-xs text-blue-600">Max Chars</label
-                  ><input
-                    v-model="field.validation.maxLength"
-                    type="number"
-                    class="w-16 p-1 text-xs border rounded"
-                    placeholder="∞"
-                  />
-                </div>
-              </template>
+              </div>
+              <div class="col-span-8">
+                <label class="text-xs text-gray-500 uppercase font-bold">Question Label</label>
+                <input
+                  v-model="field.label"
+                  type="text"
+                  class="w-full border border-gray-300 rounded p-2 mt-1 focus:ring-black focus:border-black"
+                />
+              </div>
+              <div class="col-span-2 flex flex-col items-center">
+                <label class="text-xs text-gray-500 uppercase font-bold">Required?</label>
+                <input
+                  v-model="field.required"
+                  type="checkbox"
+                  class="mt-3 h-5 w-5 text-black focus:ring-black border-gray-300 rounded"
+                />
+              </div>
 
-              <template v-if="field.type === 'number'">
-                <div class="flex items-center gap-2">
-                  <label class="text-xs text-blue-600">Min Value</label
-                  ><input
-                    v-model="field.validation.min"
-                    type="number"
-                    class="w-16 p-1 text-xs border rounded"
-                    placeholder="0"
-                  />
-                </div>
-                <div class="flex items-center gap-2">
-                  <label class="text-xs text-blue-600">Max Value</label
-                  ><input
-                    v-model="field.validation.max"
-                    type="number"
-                    class="w-16 p-1 text-xs border rounded"
-                    placeholder="∞"
-                  />
-                </div>
-              </template>
-
-              <template v-if="field.type === 'select'">
+              <div
+                v-if="field.type === 'email'"
+                class="col-span-12 bg-blue-50 p-3 rounded border border-blue-100 flex flex-wrap gap-4 items-center"
+              >
+                <span class="text-xs font-bold text-blue-800 uppercase flex items-center gap-1"
+                  >🛡️ Settings</span
+                >
                 <label
                   class="flex items-center gap-1 text-xs text-blue-700 cursor-pointer select-none bg-white px-2 py-1 rounded border border-blue-200"
                 >
-                  <input type="checkbox" v-model="field.validation.multiSelect" /> Allow Multiple?
+                  <input type="checkbox" v-model="field.validation.autoFillUser" />
+                  Auto-fill with Connected User Email?
                 </label>
-                <template v-if="field.validation.multiSelect">
-                  <div class="flex items-center gap-2">
-                    <label class="text-xs text-blue-600">Min Select</label
-                    ><input
-                      v-model="field.validation.minSelect"
-                      type="number"
-                      class="w-14 p-1 text-xs border rounded"
-                    />
-                  </div>
-                  <div class="flex items-center gap-2">
-                    <label class="text-xs text-blue-600">Max Select</label
-                    ><input
-                      v-model="field.validation.maxSelect"
-                      type="number"
-                      class="w-14 p-1 text-xs border rounded"
-                    />
-                  </div>
-                </template>
-              </template>
-
-              <template v-if="['file', 'signature'].includes(field.type)">
-                <div class="flex items-center gap-2">
-                  <label class="text-xs text-blue-600">Max File Size (MB)</label
-                  ><input
-                    v-model="field.validation.maxFileSize"
-                    type="number"
-                    class="w-16 p-1 text-xs border rounded"
-                    placeholder="5"
-                  />
-                </div>
-              </template>
-
-              <template v-if="field.type === 'table'">
-                <div class="flex items-center gap-2">
-                  <label class="text-xs text-blue-600">Sum Check on:</label>
-                  <select
-                    v-model="field.validation.sumColumnId"
-                    class="text-xs p-1 border rounded w-24"
-                  >
-                    <option value="">(None)</option>
-                    <option
-                      v-for="col in field.columns.filter((c) => c.type === 'number' && !c.locked)"
-                      :key="col.id"
-                      :value="col.id"
-                    >
-                      {{ col.label }}
-                    </option>
-                  </select>
-                </div>
-                <template v-if="field.validation.sumColumnId">
-                  <div class="flex items-center gap-2">
-                    <label class="text-xs text-blue-600">Min Total</label
-                    ><input
-                      v-model="field.validation.minSum"
-                      type="number"
-                      class="w-14 p-1 text-xs border rounded"
-                    />
-                  </div>
-                  <div class="flex items-center gap-2">
-                    <label class="text-xs text-blue-600">Max Total</label
-                    ><input
-                      v-model="field.validation.maxSum"
-                      type="number"
-                      class="w-14 p-1 text-xs border rounded"
-                    />
-                  </div>
-                </template>
-              </template>
-            </div>
-
-            <div
-              v-if="field.type === 'table'"
-              class="col-span-12 bg-gray-50 p-4 rounded-lg border border-gray-100"
-            >
-              <div class="grid gap-2 mb-4">
-                <div class="flex justify-between items-center mb-2">
-                  <h4 class="text-xs font-bold text-blue-800 uppercase">Column Configuration</h4>
-                  <button
-                    @click="addTableColumn(index)"
-                    :disabled="field.columns.length >= 6"
-                    class="text-xs bg-gray-200 text-gray-800 px-2 py-1 rounded hover:bg-gray-300"
-                  >
-                    + Add Column
-                  </button>
-                </div>
-                <div
-                  v-for="(col, cIdx) in field.columns"
-                  :key="col.id"
-                  class="flex flex-col gap-2 bg-white p-3 rounded border border-gray-100"
+                <span class="text-[10px] text-gray-400 italic ml-2"
+                  >Format: name@domain.com verified automatically</span
                 >
-                  <div class="flex gap-2 items-center">
-                    <input
-                      v-model="col.label"
-                      placeholder="Column Name"
-                      class="border rounded p-1 text-sm flex-grow font-bold"
+              </div>
+
+              <div
+                v-if="field.required && field.type !== 'email'"
+                class="col-span-12 bg-blue-50 p-3 rounded border border-blue-100 flex flex-wrap gap-4 items-center"
+              >
+                <span class="text-xs font-bold text-blue-800 uppercase flex items-center gap-1"
+                  >🛡️ Validation Rules</span
+                >
+
+                <template v-if="field.type === 'text'">
+                  <div class="flex items-center gap-2">
+                    <label class="text-xs text-blue-600">Min Chars</label
+                    ><input
+                      v-model="field.validation.minLength"
+                      type="number"
+                      class="w-16 p-1 text-xs border rounded"
+                      placeholder="0"
                     />
-                    <select v-model="col.type" class="border rounded p-1 text-sm bg-gray-50">
-                      <option value="text">String</option>
-                      <option value="number">Number</option>
-                      <option value="image">Picture</option>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <label class="text-xs text-blue-600">Max Chars</label
+                    ><input
+                      v-model="field.validation.maxLength"
+                      type="number"
+                      class="w-16 p-1 text-xs border rounded"
+                      placeholder="∞"
+                    />
+                  </div>
+                </template>
+
+                <template v-if="field.type === 'number'">
+                  <div class="flex items-center gap-2">
+                    <label class="text-xs text-blue-600">Min Value</label
+                    ><input
+                      v-model="field.validation.min"
+                      type="number"
+                      class="w-16 p-1 text-xs border rounded"
+                      placeholder="0"
+                    />
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <label class="text-xs text-blue-600">Max Value</label
+                    ><input
+                      v-model="field.validation.max"
+                      type="number"
+                      class="w-16 p-1 text-xs border rounded"
+                      placeholder="∞"
+                    />
+                  </div>
+                </template>
+
+                <template v-if="field.type === 'select'">
+                  <label
+                    class="flex items-center gap-1 text-xs text-blue-700 cursor-pointer select-none bg-white px-2 py-1 rounded border border-blue-200"
+                  >
+                    <input type="checkbox" v-model="field.validation.multiSelect" /> Allow Multiple?
+                  </label>
+                  <template v-if="field.validation.multiSelect">
+                    <div class="flex items-center gap-2">
+                      <label class="text-xs text-blue-600">Min Select</label
+                      ><input
+                        v-model="field.validation.minSelect"
+                        type="number"
+                        class="w-14 p-1 text-xs border rounded"
+                      />
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <label class="text-xs text-blue-600">Max Select</label
+                      ><input
+                        v-model="field.validation.maxSelect"
+                        type="number"
+                        class="w-14 p-1 text-xs border rounded"
+                      />
+                    </div>
+                  </template>
+                </template>
+
+                <template v-if="['file', 'signature'].includes(field.type)">
+                  <div class="flex items-center gap-2">
+                    <label class="text-xs text-blue-600">Max File Size (MB)</label
+                    ><input
+                      v-model="field.validation.maxFileSize"
+                      type="number"
+                      class="w-16 p-1 text-xs border rounded"
+                      placeholder="5"
+                    />
+                  </div>
+                </template>
+
+                <template v-if="field.type === 'table'">
+                  <div class="flex items-center gap-2">
+                    <label class="text-xs text-blue-600">Sum Check on:</label>
+                    <select
+                      v-model="field.validation.sumColumnId"
+                      class="text-xs p-1 border rounded w-24"
+                    >
+                      <option value="">(None)</option>
+                      <option
+                        v-for="col in field.columns.filter((c) => c.type === 'number' && !c.locked)"
+                        :key="col.id"
+                        :value="col.id"
+                      >
+                        {{ col.label }}
+                      </option>
                     </select>
-                    <label
-                      class="flex items-center gap-1 text-xs text-blue-600 cursor-pointer border border-blue-200 px-2 py-1 rounded bg-blue-50"
-                      ><input type="checkbox" v-model="col.required" /> Required?</label
-                    >
-                    <label
-                      class="flex items-center gap-1 text-xs text-gray-600 cursor-pointer border px-2 py-1 rounded bg-gray-50"
-                      ><input type="checkbox" v-model="col.locked" /> Locked</label
-                    >
+                  </div>
+                  <template v-if="field.validation.sumColumnId">
+                    <div class="flex items-center gap-2">
+                      <label class="text-xs text-blue-600">Min Total</label
+                      ><input
+                        v-model="field.validation.minSum"
+                        type="number"
+                        class="w-14 p-1 text-xs border rounded"
+                      />
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <label class="text-xs text-blue-600">Max Total</label
+                      ><input
+                        v-model="field.validation.maxSum"
+                        type="number"
+                        class="w-14 p-1 text-xs border rounded"
+                      />
+                    </div>
+                  </template>
+                </template>
+              </div>
+
+              <div
+                v-if="field.type === 'table'"
+                class="col-span-12 bg-gray-50 p-4 rounded-lg border border-gray-100"
+              >
+                <div class="grid gap-2 mb-4">
+                  <div class="flex justify-between items-center mb-2">
+                    <h4 class="text-xs font-bold text-blue-800 uppercase">Column Configuration</h4>
                     <button
-                      @click="removeTableColumn(index, cIdx)"
-                      :disabled="field.columns.length <= 2"
-                      class="text-red-400 hover:text-red-600 font-bold px-2"
+                      @click="addTableColumn(index)"
+                      :disabled="field.columns.length >= 6"
+                      class="text-xs bg-gray-200 text-gray-800 px-2 py-1 rounded hover:bg-gray-300"
                     >
-                      ×
+                      + Add Column
                     </button>
                   </div>
                   <div
-                    v-if="!col.locked && col.type !== 'image'"
-                    class="flex items-center gap-3 pl-2 border-l-2 border-gray-200"
+                    v-for="(col, cIdx) in field.columns"
+                    :key="col.id"
+                    class="flex flex-col gap-2 bg-white p-3 rounded border border-gray-100"
                   >
-                    <span class="text-[10px] text-blue-400 font-bold uppercase tracking-wide"
-                      >Rules:</span
+                    <div class="flex gap-2 items-center">
+                      <input
+                        v-model="col.label"
+                        placeholder="Column Name"
+                        class="border rounded p-1 text-sm flex-grow font-bold"
+                      />
+                      <select v-model="col.type" class="border rounded p-1 text-sm bg-gray-50">
+                        <option value="text">String</option>
+                        <option value="number">Number</option>
+                        <option value="image">Picture</option>
+                      </select>
+                      <label
+                        class="flex items-center gap-1 text-xs text-blue-600 cursor-pointer border border-blue-200 px-2 py-1 rounded bg-blue-50"
+                        ><input type="checkbox" v-model="col.required" /> Required?</label
+                      >
+                      <label
+                        class="flex items-center gap-1 text-xs text-gray-600 cursor-pointer border px-2 py-1 rounded bg-gray-50"
+                        ><input type="checkbox" v-model="col.locked" /> Locked</label
+                      >
+                      <button
+                        @click="removeTableColumn(index, cIdx)"
+                        :disabled="field.columns.length <= 2"
+                        class="text-red-400 hover:text-red-600 font-bold px-2"
+                      >
+                        ×
+                      </button>
+                    </div>
+                    <div
+                      v-if="!col.locked && col.type !== 'image'"
+                      class="flex items-center gap-3 pl-2 border-l-2 border-gray-200"
                     >
-                    <template v-if="col.type === 'text'">
-                      <div class="flex items-center gap-1">
-                        <span class="text-[10px] text-gray-500">Min Len</span
-                        ><input
-                          v-model="col.validation.minLength"
-                          type="number"
-                          class="w-12 p-0.5 text-xs border rounded"
-                          placeholder="0"
-                        />
-                      </div>
-                      <div class="flex items-center gap-1">
-                        <span class="text-[10px] text-gray-500">Max Len</span
-                        ><input
-                          v-model="col.validation.maxLength"
-                          type="number"
-                          class="w-12 p-0.5 text-xs border rounded"
-                          placeholder="∞"
-                        />
-                      </div>
-                    </template>
-                    <template v-if="col.type === 'number'">
-                      <div class="flex items-center gap-1">
-                        <span class="text-[10px] text-gray-500">Min Val</span
-                        ><input
-                          v-model="col.validation.min"
-                          type="number"
-                          class="w-12 p-0.5 text-xs border rounded"
-                          placeholder="0"
-                        />
-                      </div>
-                      <div class="flex items-center gap-1">
-                        <span class="text-[10px] text-gray-500">Max Val</span
-                        ><input
-                          v-model="col.validation.max"
-                          type="number"
-                          class="w-12 p-0.5 text-xs border rounded"
-                          placeholder="∞"
-                        />
-                      </div>
-                    </template>
+                      <span class="text-[10px] text-blue-400 font-bold uppercase tracking-wide"
+                        >Rules:</span
+                      >
+                      <template v-if="col.type === 'text'">
+                        <div class="flex items-center gap-1">
+                          <span class="text-[10px] text-gray-500">Min Len</span
+                          ><input
+                            v-model="col.validation.minLength"
+                            type="number"
+                            class="w-12 p-0.5 text-xs border rounded"
+                            placeholder="0"
+                          />
+                        </div>
+                        <div class="flex items-center gap-1">
+                          <span class="text-[10px] text-gray-500">Max Len</span
+                          ><input
+                            v-model="col.validation.maxLength"
+                            type="number"
+                            class="w-12 p-0.5 text-xs border rounded"
+                            placeholder="∞"
+                          />
+                        </div>
+                      </template>
+                      <template v-if="col.type === 'number'">
+                        <div class="flex items-center gap-1">
+                          <span class="text-[10px] text-gray-500">Min Val</span
+                          ><input
+                            v-model="col.validation.min"
+                            type="number"
+                            class="w-12 p-0.5 text-xs border rounded"
+                            placeholder="0"
+                          />
+                        </div>
+                        <div class="flex items-center gap-1">
+                          <span class="text-[10px] text-gray-500">Max Val</span
+                          ><input
+                            v-model="col.validation.max"
+                            type="number"
+                            class="w-12 p-0.5 text-xs border rounded"
+                            placeholder="∞"
+                          />
+                        </div>
+                      </template>
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <div class="flex justify-between items-center mb-2">
+                    <label class="text-xs text-gray-800 uppercase font-bold"
+                      >Table Content Preview</label
+                    ><button
+                      @click="addTableRow(index)"
+                      class="text-xs bg-gray-200 text-gray-800 px-2 py-1 rounded hover:bg-gray-300"
+                    >
+                      Add Row
+                    </button>
+                  </div>
+                  <div class="overflow-x-auto border rounded-lg bg-white">
+                    <table class="w-full text-sm text-left">
+                      <thead class="bg-gray-100 text-gray-900 font-bold">
+                        <tr>
+                          <th v-for="col in field.columns" :key="col.id" class="p-2 border-b">
+                            {{ col.label }}
+                          </th>
+                          <th class="p-2 border-b w-8"></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="(row, rIdx) in field.rows" :key="rIdx" class="hover:bg-gray-50">
+                          <td
+                            v-for="col in field.columns"
+                            :key="col.id"
+                            class="p-2 border-b border-gray-100"
+                          >
+                            <template v-if="col.locked"
+                              ><div v-if="col.type === 'image'">
+                                <div v-if="row[col.id]" class="relative w-10 h-10 group">
+                                  <img
+                                    :src="row[col.id]"
+                                    class="w-full h-full object-cover rounded"
+                                  /><button
+                                    @click="row[col.id] = ''"
+                                    class="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-4 h-4 text-xs"
+                                  >
+                                    ×
+                                  </button>
+                                </div>
+                                <label v-else class="cursor-pointer text-xs text-blue-500"
+                                  >Img
+                                  <input
+                                    type="file"
+                                    class="hidden"
+                                    @change="
+                                      (e) => handleTableCellImageUpload(e, index, rIdx, col.id)
+                                    "
+                                /></label>
+                              </div>
+                              <input
+                                v-else
+                                v-model="row[col.id]"
+                                class="w-full border rounded p-1 text-xs bg-yellow-50"
+                            /></template>
+                            <div v-else class="text-xs text-gray-400 italic text-center">
+                              User Input
+                            </div>
+                          </td>
+                          <td class="p-2 border-b border-gray-100 text-center">
+                            <button
+                              @click="removeTableRow(index, rIdx)"
+                              class="text-red-400 font-bold"
+                            >
+                              ×
+                            </button>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
                   </div>
                 </div>
               </div>
-              <div>
-                <div class="flex justify-between items-center mb-2">
-                  <label class="text-xs text-gray-800 uppercase font-bold"
-                    >Table Content Preview</label
-                  ><button
-                    @click="addTableRow(index)"
-                    class="text-xs bg-gray-200 text-gray-800 px-2 py-1 rounded hover:bg-gray-300"
-                  >
-                    Add Row
-                  </button>
-                </div>
-                <div class="overflow-x-auto border rounded-lg bg-white">
-                  <table class="w-full text-sm text-left">
-                    <thead class="bg-gray-100 text-gray-900 font-bold">
-                      <tr>
-                        <th v-for="col in field.columns" :key="col.id" class="p-2 border-b">
-                          {{ col.label }}
-                        </th>
-                        <th class="p-2 border-b w-8"></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr v-for="(row, rIdx) in field.rows" :key="rIdx" class="hover:bg-gray-50">
-                        <td
-                          v-for="col in field.columns"
-                          :key="col.id"
-                          class="p-2 border-b border-gray-100"
-                        >
-                          <template v-if="col.locked"
-                            ><div v-if="col.type === 'image'">
-                              <div v-if="row[col.id]" class="relative w-10 h-10 group">
-                                <img
-                                  :src="row[col.id]"
-                                  class="w-full h-full object-cover rounded"
-                                /><button
-                                  @click="row[col.id] = ''"
-                                  class="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-4 h-4 text-xs"
-                                >
-                                  ×
-                                </button>
-                              </div>
-                              <label v-else class="cursor-pointer text-xs text-blue-500"
-                                >Img
-                                <input
-                                  type="file"
-                                  class="hidden"
-                                  @change="
-                                    (e) => handleTableCellImageUpload(e, index, rIdx, col.id)
-                                  "
-                              /></label>
-                            </div>
-                            <input
-                              v-else
-                              v-model="row[col.id]"
-                              class="w-full border rounded p-1 text-xs bg-yellow-50"
-                          /></template>
-                          <div v-else class="text-xs text-gray-400 italic text-center">
-                            User Input
-                          </div>
-                        </td>
-                        <td class="p-2 border-b border-gray-100 text-center">
-                          <button
-                            @click="removeTableRow(index, rIdx)"
-                            class="text-red-400 font-bold"
-                          >
-                            ×
-                          </button>
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
 
-            <div
-              v-if="field.type === 'select'"
-              class="col-span-12 bg-orange-50 border-orange-100 p-4 rounded-md border"
-            >
-              <label class="text-xs text-gray-600 uppercase font-bold"
-                >Options (One per line)</label
+              <div
+                v-if="field.type === 'select'"
+                class="col-span-12 bg-orange-50 border-orange-100 p-4 rounded-md border"
               >
-              <textarea
-                rows="3"
-                class="w-full border border-orange-200 rounded p-2 mt-1 focus:ring-orange-500 focus:border-orange-500 font-mono text-sm"
-                :value="field.options ? field.options.join('\n') : ''"
-                @input="(e) => (field.options = e.target.value.split('\n'))"
-              ></textarea>
-            </div>
+                <label class="text-xs text-gray-600 uppercase font-bold"
+                  >Options (One per line)</label
+                >
+                <textarea
+                  rows="3"
+                  class="w-full border border-orange-200 rounded p-2 mt-1 focus:ring-orange-500 focus:border-orange-500 font-mono text-sm"
+                  :value="field.options ? field.options.join('\n') : ''"
+                  @input="(e) => (field.options = e.target.value.split('\n'))"
+                ></textarea>
+              </div>
+            </template>
 
             <div class="col-span-12 flex justify-end pt-2 border-t border-gray-100">
               <button
