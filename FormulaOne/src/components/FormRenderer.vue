@@ -29,10 +29,16 @@ const getFieldValue = (field) => {
     if (mainValue === undefined || mainValue === null || mainValue === '') return null
   }
 
-  // 3. Simple Fields
+  // 3. Dependent Select (Return structured object)
+  if (field.type === 'dependent_select') {
+    if (mainValue === undefined || mainValue === null) return { parent: '', child: '' }
+    return mainValue
+  }
+
+  // 4. Simple Fields
   if (mainValue === undefined || mainValue === null) return ''
 
-  // 4. Construct Complex Objects if value exists
+  // 5. Construct Complex Objects if value exists
   if (field.type === 'depot_select') {
     return { name: mainValue, number: props.modelValue[`${field.id}_ship_to_number`] }
   }
@@ -71,6 +77,19 @@ const handleFieldUpdate = (fieldId, newValue) => {
   } else {
     // Standard
     newFormData[fieldId] = newValue
+  }
+
+  emit('update:modelValue', newFormData)
+}
+
+const handleDependentUpdate = (fieldId, level, value) => {
+  const newFormData = { ...props.modelValue }
+  const currentValue = newFormData[fieldId] || { parent: '', child: '' }
+
+  if (level === 'parent') {
+    newFormData[fieldId] = { parent: value, child: '' }
+  } else {
+    newFormData[fieldId] = { ...currentValue, child: value }
   }
 
   emit('update:modelValue', newFormData)
@@ -216,21 +235,84 @@ const handleUserImageUpload = async (event, fieldId, rowIndex, colId, fieldValid
         </p>
       </div>
 
-      <div v-else-if="field.type === 'description'" class="mb-6 p-5 bg-gray-50 border border-gray-200 rounded-lg shadow-sm">
+      <div
+        v-else-if="field.type === 'description'"
+        class="mb-6 p-5 bg-gray-50 border border-gray-200 rounded-lg shadow-sm"
+      >
         <h3 v-if="field.label" class="text-lg font-bold text-gray-900 mb-2">
           {{ field.label }}
         </h3>
-        
+
         <p v-if="field.content" class="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
           {{ field.content }}
         </p>
 
         <div v-if="field.imageUrl" class="mt-4 flex justify-center">
-          <img 
-            :src="field.imageUrl" 
-            alt="Descriptive attachment" 
+          <img
+            :src="field.imageUrl"
+            alt="Descriptive attachment"
             class="max-w-full max-h-[400px] object-contain rounded border border-gray-200 shadow-sm"
           />
+        </div>
+      </div>
+
+      <div
+        v-else-if="field.type === 'dependent_select'"
+        class="mb-6 bg-gray-50 p-4 rounded-lg border border-gray-200"
+      >
+        <label class="block text-sm font-bold text-gray-900 mb-3">
+          {{ field.label }} <span v-if="field.required" class="text-red-500">*</span>
+        </label>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-semibold text-gray-600 mb-1">{{
+              field.parentLabel
+            }}</label>
+            <select
+              :value="getFieldValue(field)?.parent || ''"
+              @change="(e) => handleDependentUpdate(field.id, 'parent', e.target.value)"
+              class="w-full border-gray-300 rounded-lg shadow-sm focus:border-black focus:ring-black"
+              :required="field.required"
+            >
+              <option value="" disabled selected>Select {{ field.parentLabel }}...</option>
+              <option
+                v-for="parentOpt in Object.keys(field.mappingData || {})"
+                :key="parentOpt"
+                :value="parentOpt"
+              >
+                {{ parentOpt }}
+              </option>
+            </select>
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-gray-600 mb-1">{{
+              field.childLabel
+            }}</label>
+            <select
+              :value="getFieldValue(field)?.child || ''"
+              @change="(e) => handleDependentUpdate(field.id, 'child', e.target.value)"
+              class="w-full border-gray-300 rounded-lg shadow-sm focus:border-black focus:ring-black disabled:bg-gray-100 disabled:cursor-not-allowed"
+              :required="field.required"
+              :disabled="!getFieldValue(field)?.parent"
+            >
+              <option value="" disabled selected>Select {{ field.childLabel }}...</option>
+              <template
+                v-if="
+                  getFieldValue(field)?.parent && field.mappingData[getFieldValue(field).parent]
+                "
+              >
+                <option
+                  v-for="childOpt in field.mappingData[getFieldValue(field).parent]"
+                  :key="childOpt"
+                  :value="childOpt"
+                >
+                  {{ childOpt }}
+                </option>
+              </template>
+            </select>
+          </div>
         </div>
       </div>
 

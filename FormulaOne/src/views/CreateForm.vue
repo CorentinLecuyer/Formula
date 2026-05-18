@@ -187,6 +187,13 @@ const addField = (type) => {
     newField.rows = [{ [newField.columns[0].id]: '', [newField.columns[1].id]: '' }]
   }
 
+  if (type === 'dependent_select') {
+    newField.parentLabel = 'Category'
+    newField.childLabel = 'Subcategory'
+    newField.mappingText = 'Fruits: Apple, Banana, Orange\nVegetables: Carrot, Broccoli'
+    newField.mappingData = {}
+  }
+
   fields.value.push(newField)
 }
 
@@ -360,7 +367,6 @@ const handleBlockImageUpload = async (event, index) => {
   }
 }
 
-// NEW: Upload logic for the Description Block fields
 const handleFieldImageUpload = async (event, fieldIndex) => {
   const file = event.target.files[0]
   if (!file) return
@@ -403,6 +409,24 @@ const saveForm = async () => {
     if (field.type === 'select' && Array.isArray(field.options)) {
       field.options = field.options.filter((opt) => opt.trim().length > 0)
     }
+
+    if (field.type === 'dependent_select' && field.mappingText) {
+      const parsedMap = {}
+      field.mappingText.split('\n').forEach((line) => {
+        if (line.includes(':')) {
+          const [parent, children] = line.split(':')
+          const parentKey = parent.trim()
+          if (parentKey) {
+            parsedMap[parentKey] = children
+              .split(',')
+              .map((c) => c.trim())
+              .filter((c) => c.length > 0)
+          }
+        }
+      })
+      field.mappingData = parsedMap
+    }
+
     finalSchema.push(field)
     if (field.type === 'depot_select') {
       finalSchema.push({
@@ -701,6 +725,14 @@ const deleteForm = async () => {
         >
           + Dropdown
         </button>
+
+        <button
+          @click="addField('dependent_select')"
+          class="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-md text-sm font-bold shadow"
+        >
+          + Dependent Dropdown
+        </button>
+
         <button
           @click="addField('table')"
           class="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-md text-sm font-bold shadow"
@@ -834,6 +866,50 @@ const deleteForm = async () => {
                     </label>
                   </div>
                 </div>
+              </div>
+            </template>
+
+            <template v-else-if="field.type === 'dependent_select'">
+              <div
+                class="col-span-12 bg-orange-50 border-orange-200 p-5 rounded-md border shadow-sm"
+              >
+                <div class="grid grid-cols-2 gap-4 mb-4">
+                  <div>
+                    <label class="text-xs text-gray-600 uppercase font-bold"
+                      >1st Dropdown Label</label
+                    >
+                    <input
+                      v-model="field.parentLabel"
+                      type="text"
+                      placeholder="e.g. Category"
+                      class="w-full border border-orange-200 rounded p-2 mt-1 focus:ring-orange-500 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label class="text-xs text-gray-600 uppercase font-bold"
+                      >2nd Dropdown Label</label
+                    >
+                    <input
+                      v-model="field.childLabel"
+                      type="text"
+                      placeholder="e.g. Subcategory"
+                      class="w-full border border-orange-200 rounded p-2 mt-1 focus:ring-orange-500 text-sm"
+                    />
+                  </div>
+                </div>
+
+                <label class="text-xs text-gray-600 uppercase font-bold">
+                  Options Mapping
+                  <span class="normal-case text-gray-400 font-normal ml-2"
+                    >Format -> Parent: Child 1, Child 2</span
+                  >
+                </label>
+                <textarea
+                  v-model="field.mappingText"
+                  rows="5"
+                  placeholder="Vehicles: Car, Truck, Bike&#10;Animals: Dog, Cat"
+                  class="w-full border border-orange-200 rounded p-2 mt-1 focus:ring-orange-500 font-mono text-sm leading-relaxed"
+                ></textarea>
               </div>
             </template>
 
