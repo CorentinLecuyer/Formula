@@ -1,61 +1,117 @@
 <script setup>
-import { ref, watch } from 'vue'
+import { ref, watch, computed } from 'vue'
 import { supabase } from '@/supabase'
 
-const props = defineProps(['modelValue', 'field'])
+const props = defineProps({
+  modelValue: {
+    type: Object,
+    default: null,
+  },
+  field: {
+    type: Object,
+    required: true,
+  },
+})
+
 const emit = defineEmits(['update:modelValue'])
 
 const searchQuery = ref('')
 const results = ref([])
 const showResults = ref(false)
+const isSearching = ref(false)
 
-const t1Name = ref(props.modelValue?.t1 || '')
-const t2Name = ref(props.modelValue?.t2 || '')
+const t1Name = ref('')
+const t2Name = ref('')
+
+const isLimitedSource = computed(() => props.field?.sourceFilter?.mode === 'limited')
+
+const allowedT1Names = computed(() =>
+  (props.field?.sourceFilter?.allowedOptions || [])
+    .map((option) => option.value || option.label)
+    .filter(Boolean),
+)
+
+const hasLimitedOptions = computed(() => allowedT1Names.value.length > 0)
+
+const syncFromModelValue = (value) => {
+  t1Name.value = value?.t1 || ''
+  t2Name.value = value?.t2 || ''
+}
+
+watch(
+  () => props.modelValue,
+  (newValue) => {
+    syncFromModelValue(newValue)
+  },
+  { immediate: true },
+)
 
 const onSearch = async () => {
-  if (searchQuery.value.length < 2) return
+  const term = searchQuery.value.trim()
 
-  // MAGIC QUERY: Fetch T1 and join the linked T2 table
-  const { data, error } = await supabase
+  if (term.length < 2) {
+    results.value = []
+    showResults.value = false
+    return
+  }
+
+  if (isLimitedSource.value && !hasLimitedOptions.value) {
+    results.value = []
+    showResults.value = true
+    return
+  }
+
+  isSearching.value = true
+
+  let query = supabase
     .from('t1_users')
     .select(
       `
       full_name,
-      t2_users ( full_name ) 
+      t2_users ( full_name )
     `,
     )
-    .ilike('full_name', `%${searchQuery.value}%`)
-    .limit(5)
+    .ilike('full_name', `%${term}%`)
 
-  if (error) console.error(error)
+  if (isLimitedSource.value) {
+    query = query.in('full_name', allowedT1Names.value)
+  }
 
-  results.value = data || []
+  const { data, error } = await query.limit(50)
+
+  if (error) {
+    console.error('T1 search failed:', error)
+    results.value = []
+  } else {
+    results.value = data || []
+  }
+
   showResults.value = true
-}
-const clearSelection = () => {
-  t1Name.value = ''
-  t2Name.value = ''
-  emit('update:modelValue', null)
+  isSearching.value = false
 }
 
 const selectUser = (row) => {
   t1Name.value = row.full_name
-  // Access the joined data safely
   t2Name.value = row.t2_users?.full_name || 'No Manager Linked'
 
-  showResults.value = false
   searchQuery.value = ''
+  results.value = []
+  showResults.value = false
 
-  emit('update:modelValue', { t1: t1Name.value, t2: t2Name.value })
+  emit('update:modelValue', {
+    t1: t1Name.value,
+    t2: t2Name.value,
+  })
 }
 
-watch(() => props.modelValue, (newVal) => {
-  if (newVal) {
-    // Update whatever local variables control the text input
-    t1Name.value = newVal.t1
-    t2Name.value = newVal.t2
-  }
-}, { immediate: true })
+const clearSelection = () => {
+  t1Name.value = ''
+  t2Name.value = ''
+  searchQuery.value = ''
+  results.value = []
+  showResults.value = false
+  emit('update:modelValue', null)
+}
 </script>
 
 <template>
@@ -64,37 +120,66 @@ watch(() => props.modelValue, (newVal) => {
       <input
         v-model="searchQuery"
         @input="onSearch"
+        @focus="searchQuery.trim().length >= 2 && (showResults = true)"
         type="text"
-        placeholder="Type name..."
+        placeholder="Type T1 name..."
         class="w-full border p-2 rounded focus:ring-2 focus:ring-green-500 outline-none"
       />
 
-      <ul
-        v-if="showResults && results.length"
-        class="absolute z-50 bg-white border mt-1 w-full shadow-lg rounded"
+      <div
+        v-if="showResults"
+        class="absolute z-50 bg-white border mt-1 w-full shadow-lg rounded max-h-60 overflow-auto"
       >
-        <li
-          v-for="item in results"
-          :key="item.full_name"
-          @click="selectUser(item)"
-          class="p-2 hover:bg-green-50 cursor-pointer text-sm border-b"
+        <div v-if="isSearching" class="p-3 text-sm text-gray-500">Searching...</div>
+
+        <div
+          v-else-if="isLimitedSource && !hasLimitedOptions"
+          class="p-3 text-sm text-orange-700 bg-orange-50"
         >
-          {{ item.full_name }}
-        </li>
-      </ul>
+          No T1 users are allowed for this form.
+        </div>
+
+        <div
+          v-else-if="results.length === 0"
+          class="p-3 text-sm text-gray-500"
+        >
+          No matching T1 user found.
+        </div>
+
+        <template v-else>
+          <button
+            v-for="item in results"
+            :key="item.full_name"
+            type="button"
+            @mousedown.prevent="selectUser(item)"
+            class="block w-full text-left p-2 hover:bg-green-50 cursor-pointer text-sm border-b last:border-b-0"
+          >
+            <span class="font-bold text-gray-800">{{ item.full_name }}</span>
+            <span class="block text-xs text-gray-500">
+              Manager: {{ item.t2_users?.full_name || 'No Manager Linked' }}
+            </span>
+          </button>
+        </template>
+      </div>
     </div>
+
+    <p v-if="isLimitedSource" class="text-xs text-green-700">
+      This list is restricted for this form.
+    </p>
 
     <div class="flex gap-4 p-3 bg-gray-50 rounded border border-gray-200">
       <div class="flex-1">
         <label class="text-[10px] text-gray-400 uppercase">T1 user</label>
         <div class="font-bold text-gray-800">{{ t1Name || '-' }}</div>
       </div>
+
       <div class="w-1/3 border-l pl-4 border-gray-200 relative">
         <label class="text-[10px] text-gray-400 uppercase">T2 Manager (Auto)</label>
         <div class="font-bold text-gray-500">{{ t2Name || '-' }}</div>
 
-                        <button
+        <button
           v-if="t1Name"
+          type="button"
           @click="clearSelection"
           class="absolute top-0 right-0 text-red-400 hover:text-red-600 font-bold px-1"
         >

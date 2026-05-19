@@ -1,4 +1,5 @@
 <script setup>
+import { computed, onMounted } from 'vue'
 import DynamicField from './DynamicField.vue'
 import { supabase } from '../supabase'
 
@@ -15,6 +16,190 @@ const props = defineProps({
 
 const emit = defineEmits(['update:modelValue'])
 
+const visibleSchema = computed(() => props.schema.filter((field) => !field.is_partner))
+
+const getEmailPrefillConfig = (field) => {
+  const rawConfig = field.emailPrefillConfig || {}
+  const merged = {
+    enabled: false,
+    sourceSchema: 'public',
+    sourceTable: '',
+    sourceColumn: '',
+    strategy: 'single_row',
+    lookupFieldId: '',
+    lookupColumn: '',
+    fixedEmailAddress: '',
+    allowEdit: true,
+    ...rawConfig,
+  }
+
+  // Backward compatibility for forms created before the explicit strategy existed.
+  if (!rawConfig.strategy && rawConfig.lookupFieldId) {
+    merged.strategy = 'lookup'
+  }
+
+  if (!['single_row', 'lookup', 'fixed'].includes(merged.strategy)) {
+    merged.strategy = 'single_row'
+  }
+
+  if (!merged.sourceSchema) {
+    merged.sourceSchema = 'public'
+  }
+
+  merged.fixedEmailAddress = String(merged.fixedEmailAddress || '').trim()
+
+  return merged
+}
+
+const isEmailPrefillLocked = (field) => {
+  const config = getEmailPrefillConfig(field)
+  return field.type === 'email' && config.enabled && config.allowEdit === false
+}
+
+const findLookupFieldForEmail = (emailField) => {
+  const config = getEmailPrefillConfig(emailField)
+  if (config.strategy !== 'lookup') return null
+
+  if (config.lookupFieldId) {
+    const explicitField = props.schema.find((field) => field.id === config.lookupFieldId)
+    if (explicitField) return explicitField
+  }
+
+  return null
+}
+
+const normalizeColumnName = (columnName) =>
+  String(columnName || '')
+    .replaceAll('"', '')
+    .trim()
+    .toLowerCase()
+
+const getLookupValue = (lookupField, formData, lookupColumn) => {
+  if (!lookupField) return null
+
+  const normalizedLookupColumn = normalizeColumnName(lookupColumn)
+
+  if (lookupField.type === 'depot_select') {
+    if (normalizedLookupColumn === 'ship to number') {
+      return formData[`${lookupField.id}_ship_to_number`] || formData[lookupField.id] || null
+    }
+  }
+
+  if (lookupField.type === 'poc_select') {
+    if (['abi_sfa_sapid__c', 'sap id', 'sap_id', 'poc id'].includes(normalizedLookupColumn)) {
+      return formData[`${lookupField.id}_sap_id`] || formData[lookupField.id] || null
+    }
+  }
+
+  if (lookupField.type === 't1_select') {
+    if (normalizedLookupColumn === 'full_name' || normalizedLookupColumn === 'full name') {
+      return formData[lookupField.id] || null
+    }
+  }
+
+  const rawValue = formData[lookupField.id]
+
+  if (rawValue && typeof rawValue === 'object' && !Array.isArray(rawValue)) {
+    return (
+      rawValue.value ||
+      rawValue.name ||
+      rawValue.t1 ||
+      rawValue.child ||
+      rawValue.parent ||
+      JSON.stringify(rawValue)
+    )
+  }
+
+  return rawValue ?? null
+}
+
+const fetchEmailPrefillValue = async (emailField, formData) => {
+  const config = getEmailPrefillConfig(emailField)
+
+  if (!config.enabled) {
+    return { shouldSet: false, value: '' }
+  }
+
+  if (config.strategy === 'fixed') {
+    return { shouldSet: true, value: config.fixedEmailAddress || '' }
+  }
+
+  if (!config.sourceTable || !config.sourceColumn) {
+    return { shouldSet: false, value: '' }
+  }
+
+  let lookupValue = null
+
+  if (config.strategy === 'lookup') {
+    const lookupField = findLookupFieldForEmail(emailField)
+    if (!lookupField || !config.lookupColumn) {
+      return { shouldSet: false, value: '' }
+    }
+
+    lookupValue = getLookupValue(lookupField, formData, config.lookupColumn)
+    if (!lookupValue) {
+      return { shouldSet: true, value: '' }
+    }
+  }
+
+  const { data, error } = await supabase.rpc('resolve_email_prefill_value', {
+    p_table_schema: config.sourceSchema || 'public',
+    p_table_name: config.sourceTable,
+    p_email_column: config.sourceColumn,
+    p_strategy: config.strategy,
+    p_lookup_column: config.strategy === 'lookup' ? config.lookupColumn : null,
+    p_lookup_value: config.strategy === 'lookup' ? String(lookupValue) : null,
+  })
+
+  if (error) {
+    console.error('Email prefill failed:', error)
+    return { shouldSet: false, value: '' }
+  }
+
+  return { shouldSet: true, value: data || '' }
+}
+
+const applyEmailPrefills = async (formData, changedFieldId) => {
+  const nextFormData = { ...formData }
+
+  for (const emailField of props.schema.filter((field) => field.type === 'email')) {
+    const config = getEmailPrefillConfig(emailField)
+    if (!config.enabled) continue
+
+    // Do not overwrite a manually edited fixed email when edits are allowed.
+    if (config.strategy === 'fixed' && changedFieldId === emailField.id && config.allowEdit) {
+      continue
+    }
+
+    if (config.strategy === 'lookup') {
+      const lookupField = findLookupFieldForEmail(emailField)
+      if (!lookupField) continue
+      if (changedFieldId && lookupField.id !== changedFieldId) continue
+    }
+
+    const { shouldSet, value } = await fetchEmailPrefillValue(emailField, nextFormData)
+    if (shouldSet) {
+      nextFormData[emailField.id] = value
+    }
+  }
+
+  return nextFormData
+}
+
+const hasFormDataChanged = (left, right) => JSON.stringify(left) !== JSON.stringify(right)
+
+onMounted(async () => {
+  const enrichedFormData = await applyEmailPrefills(props.modelValue)
+  if (hasFormDataChanged(enrichedFormData, props.modelValue)) {
+    emit('update:modelValue', enrichedFormData)
+  }
+})
+
+const handleEmailInput = (field, value) => {
+  if (isEmailPrefillLocked(field)) return
+  emit('update:modelValue', { ...props.modelValue, [field.id]: value })
+}
+
 // --- 1. Reconstruct Objects for Child Components ---
 const getFieldValue = (field) => {
   const mainValue = props.modelValue[field.id]
@@ -24,12 +209,37 @@ const getFieldValue = (field) => {
     return Array.isArray(mainValue) ? mainValue : []
   }
 
-  // 2. Complex Fields (Return NULL if empty, not string)
-  if (['depot_select', 'poc_select', 't1_select'].includes(field.type)) {
+  // 2. Complex Fields
+  if (field.type === 'poc_select') {
+    const isManual = !!props.modelValue[`${field.id}_is_manual`]
+
+    if ((mainValue === undefined || mainValue === null || mainValue === '') && !isManual) {
+      return null
+    }
+
+    const manualMode =
+      props.modelValue[`${field.id}_manual_mode`] ||
+      (isManual ? field.manualPocMode || 'name_only' : null)
+    const mavenAccount = props.modelValue[`${field.id}_maven_account`] || {}
+    const mavenEstablishmentName = String(mavenAccount.establishment_name || '').trim()
+
+    return {
+      name: isManual && manualMode === 'maven_account'
+        ? mavenEstablishmentName || mainValue || 'to be created in maven'
+        : mainValue || '',
+      sap_id: props.modelValue[`${field.id}_sap_id`] || '',
+      id: props.modelValue[`${field.id}_id`] || null,
+      is_manual: isManual,
+      manual_mode: manualMode,
+      maven_account: mavenAccount,
+    }
+  }
+
+  if (['depot_select', 't1_select'].includes(field.type)) {
     if (mainValue === undefined || mainValue === null || mainValue === '') return null
   }
 
-  // 3. Dependent Select (Return structured object)
+  // 3. Dependent Select
   if (field.type === 'dependent_select') {
     if (mainValue === undefined || mainValue === null) return { parent: '', child: '' }
     return mainValue
@@ -38,51 +248,92 @@ const getFieldValue = (field) => {
   // 4. Simple Fields
   if (mainValue === undefined || mainValue === null) return ''
 
-  // 5. Construct Complex Objects if value exists
+  // 5. Construct Complex Objects
   if (field.type === 'depot_select') {
-    return { name: mainValue, number: props.modelValue[`${field.id}_ship_to_number`] }
-  }
-  if (field.type === 'poc_select') {
     return {
       name: mainValue,
-      sap_id: props.modelValue[`${field.id}_sap_id`],
-      id: props.modelValue[`${field.id}_id`] || null,
+      number: props.modelValue[`${field.id}_ship_to_number`],
     }
   }
+
   if (field.type === 't1_select') {
-    return { t1: mainValue, t2: props.modelValue[`${field.id}_manager_name`] }
+    return {
+      t1: mainValue,
+      t2: props.modelValue[`${field.id}_manager_name`],
+    }
   }
 
   return mainValue
 }
 
 // --- 2. Saving Logic ---
-const handleFieldUpdate = (fieldId, newValue) => {
+const handleFieldUpdate = async (fieldId, newValue) => {
   const newFormData = { ...props.modelValue }
+  const field = props.schema.find((schemaField) => schemaField.id === fieldId)
 
-  // CHECK: Is this a "Smart Object"?
-  if (typeof newValue === 'object' && newValue !== null && !Array.isArray(newValue)) {
-    if (newValue.name !== undefined && newValue.number !== undefined) {
-      newFormData[fieldId] = newValue.name
-      newFormData[`${fieldId}_ship_to_number`] = newValue.number
-    } else if (newValue.sap_id !== undefined) {
-      newFormData[fieldId] = newValue.name
-      newFormData[`${fieldId}_sap_id`] = newValue.sap_id
-    } else if (newValue.t1 !== undefined) {
-      newFormData[fieldId] = newValue.t1
-      newFormData[`${fieldId}_manager_name`] = newValue.t2
-    } else {
-      newFormData[fieldId] = newValue
-    }
-  } else {
-    // Standard
-    newFormData[fieldId] = newValue
+  if (newValue === null) {
+    newFormData[fieldId] = null
+    delete newFormData[`${fieldId}_ship_to_number`]
+    delete newFormData[`${fieldId}_sap_id`]
+    delete newFormData[`${fieldId}_id`]
+    delete newFormData[`${fieldId}_is_manual`]
+    delete newFormData[`${fieldId}_manual_mode`]
+    delete newFormData[`${fieldId}_maven_account`]
+    delete newFormData[`${fieldId}_manager_name`]
+
+    const enrichedFormData = await applyEmailPrefills(newFormData, fieldId)
+    emit('update:modelValue', enrichedFormData)
+    return
   }
 
-  emit('update:modelValue', newFormData)
+  if (field?.type === 'poc_select') {
+    const isManual = !!newValue?.is_manual
+    const manualMode = newValue?.manual_mode || (isManual ? field.manualPocMode || 'name_only' : null)
+
+    const mavenAccount = newValue?.maven_account || {}
+    const mavenEstablishmentName = String(mavenAccount.establishment_name || '').trim()
+
+    newFormData[fieldId] =
+      isManual && manualMode === 'maven_account'
+        ? mavenEstablishmentName || newValue?.name || 'to be created in maven'
+        : newValue?.name || ''
+    newFormData[`${fieldId}_sap_id`] = newValue?.sap_id || (isManual ? '00000000' : '')
+    newFormData[`${fieldId}_id`] = newValue?.id || (isManual ? 'MANUAL' : null)
+    newFormData[`${fieldId}_is_manual`] = isManual
+    newFormData[`${fieldId}_manual_mode`] = manualMode
+    newFormData[`${fieldId}_maven_account`] =
+      manualMode === 'maven_account' ? mavenAccount : null
+
+    const enrichedFormData = await applyEmailPrefills(newFormData, fieldId)
+    emit('update:modelValue', enrichedFormData)
+    return
+  }
+
+  if (field?.type === 'depot_select') {
+    newFormData[fieldId] = newValue?.name || ''
+    newFormData[`${fieldId}_ship_to_number`] = newValue?.number || ''
+
+    const enrichedFormData = await applyEmailPrefills(newFormData, fieldId)
+    emit('update:modelValue', enrichedFormData)
+    return
+  }
+
+  if (field?.type === 't1_select') {
+    newFormData[fieldId] = newValue?.t1 || ''
+    newFormData[`${fieldId}_manager_name`] = newValue?.t2 || ''
+
+    const enrichedFormData = await applyEmailPrefills(newFormData, fieldId)
+    emit('update:modelValue', enrichedFormData)
+    return
+  }
+
+  newFormData[fieldId] = newValue
+
+  const enrichedFormData = await applyEmailPrefills(newFormData, fieldId)
+  emit('update:modelValue', enrichedFormData)
 }
 
-const handleDependentUpdate = (fieldId, level, value) => {
+const handleDependentUpdate = async (fieldId, level, value) => {
   const newFormData = { ...props.modelValue }
   const currentValue = newFormData[fieldId] || { parent: '', child: '' }
 
@@ -92,7 +343,8 @@ const handleDependentUpdate = (fieldId, level, value) => {
     newFormData[fieldId] = { ...currentValue, child: value }
   }
 
-  emit('update:modelValue', newFormData)
+  const enrichedFormData = await applyEmailPrefills(newFormData, fieldId)
+  emit('update:modelValue', enrichedFormData)
 }
 
 // --- 3. Table Image Upload Helper ---
@@ -134,7 +386,7 @@ const handleUserImageUpload = async (event, fieldId, rowIndex, colId, fieldValid
   </div>
 
   <div class="space-y-6 mt-6">
-    <div v-for="field in schema" :key="field.id" v-show="!field.is_partner">
+    <div v-for="field in visibleSchema" :key="field.id">
       <div v-if="field.type === 'table'" class="overflow-x-auto mt-2 mb-6">
         <label class="block text-sm font-bold text-gray-700 mb-2">{{ field.label }}</label>
 
@@ -191,6 +443,7 @@ const handleUserImageUpload = async (event, fieldId, rowIndex, colId, fieldValid
                     <div v-if="row[col.id]" class="relative inline-block">
                       <img :src="row[col.id]" class="h-10 w-auto object-contain rounded" />
                       <button
+                        type="button"
                         @click="row[col.id] = ''"
                         class="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs"
                       >
@@ -202,7 +455,7 @@ const handleUserImageUpload = async (event, fieldId, rowIndex, colId, fieldValid
                       type="file"
                       accept="image/*"
                       class="text-xs w-full"
-                      @change="(e) => handleUserImageUpload(e, field.id, rIdx, col.id)"
+                      @change="(event) => handleUserImageUpload(event, field.id, rIdx, col.id)"
                     />
                   </div>
                 </template>
@@ -226,12 +479,24 @@ const handleUserImageUpload = async (event, fieldId, rowIndex, colId, fieldValid
         <input
           type="email"
           :value="modelValue[field.id]"
-          @input="$emit('update:modelValue', { ...modelValue, [field.id]: $event.target.value })"
+          :readonly="isEmailPrefillLocked(field)"
+          @input="handleEmailInput(field, $event.target.value)"
           class="w-full border border-gray-300 rounded-lg p-3 focus:ring-black focus:border-black transition"
+          :class="isEmailPrefillLocked(field) ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : ''"
           placeholder="name@company.com"
         />
         <p v-if="field.validation?.autoFillUser" class="text-xs text-gray-400 mt-1">
           Auto-filled with your account email.
+        </p>
+        <p v-if="field.emailPrefillConfig?.enabled" class="text-xs text-blue-500 mt-1">
+          <span v-if="field.emailPrefillConfig.strategy === 'fixed'">
+            Fixed email for this form.
+          </span>
+          <span v-else>
+            Pre-filled from {{ field.emailPrefillConfig.sourceTable }}.{{ field.emailPrefillConfig.sourceColumn }}.
+          </span>
+          <span v-if="isEmailPrefillLocked(field)">The respondent cannot edit this value.</span>
+          <span v-else>The respondent can edit this value.</span>
         </p>
       </div>
 
@@ -271,7 +536,7 @@ const handleUserImageUpload = async (event, fieldId, rowIndex, colId, fieldValid
             }}</label>
             <select
               :value="getFieldValue(field)?.parent || ''"
-              @change="(e) => handleDependentUpdate(field.id, 'parent', e.target.value)"
+              @change="(event) => handleDependentUpdate(field.id, 'parent', event.target.value)"
               class="w-full border-gray-300 rounded-lg shadow-sm focus:border-black focus:ring-black"
               :required="field.required"
             >
@@ -292,7 +557,7 @@ const handleUserImageUpload = async (event, fieldId, rowIndex, colId, fieldValid
             }}</label>
             <select
               :value="getFieldValue(field)?.child || ''"
-              @change="(e) => handleDependentUpdate(field.id, 'child', e.target.value)"
+              @change="(event) => handleDependentUpdate(field.id, 'child', event.target.value)"
               class="w-full border-gray-300 rounded-lg shadow-sm focus:border-black focus:ring-black disabled:bg-gray-100 disabled:cursor-not-allowed"
               :required="field.required"
               :disabled="!getFieldValue(field)?.parent"
@@ -324,7 +589,7 @@ const handleUserImageUpload = async (event, fieldId, rowIndex, colId, fieldValid
       />
     </div>
 
-    <div v-if="schema.length === 0" class="text-gray-500 italic text-center">
+    <div v-if="visibleSchema.length === 0" class="text-gray-500 italic text-center">
       No fields defined in this form.
     </div>
   </div>
