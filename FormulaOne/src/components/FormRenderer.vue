@@ -224,9 +224,10 @@ const getFieldValue = (field) => {
     const mavenEstablishmentName = String(mavenAccount.establishment_name || '').trim()
 
     return {
-      name: isManual && manualMode === 'maven_account'
-        ? mavenEstablishmentName || mainValue || 'to be created in maven'
-        : mainValue || '',
+      name:
+        isManual && manualMode === 'maven_account'
+          ? mavenEstablishmentName || mainValue || 'to be created in maven'
+          : mainValue || '',
       sap_id: props.modelValue[`${field.id}_sap_id`] || '',
       id: props.modelValue[`${field.id}_id`] || null,
       is_manual: isManual,
@@ -288,7 +289,8 @@ const handleFieldUpdate = async (fieldId, newValue) => {
 
   if (field?.type === 'poc_select') {
     const isManual = !!newValue?.is_manual
-    const manualMode = newValue?.manual_mode || (isManual ? field.manualPocMode || 'name_only' : null)
+    const manualMode =
+      newValue?.manual_mode || (isManual ? field.manualPocMode || 'name_only' : null)
 
     const mavenAccount = newValue?.maven_account || {}
     const mavenEstablishmentName = String(mavenAccount.establishment_name || '').trim()
@@ -301,8 +303,7 @@ const handleFieldUpdate = async (fieldId, newValue) => {
     newFormData[`${fieldId}_id`] = newValue?.id || (isManual ? 'MANUAL' : null)
     newFormData[`${fieldId}_is_manual`] = isManual
     newFormData[`${fieldId}_manual_mode`] = manualMode
-    newFormData[`${fieldId}_maven_account`] =
-      manualMode === 'maven_account' ? mavenAccount : null
+    newFormData[`${fieldId}_maven_account`] = manualMode === 'maven_account' ? mavenAccount : null
 
     const enrichedFormData = await applyEmailPrefills(newFormData, fieldId)
     emit('update:modelValue', enrichedFormData)
@@ -477,14 +478,18 @@ const handleUserImageUpload = async (event, fieldId, rowIndex, colId, fieldValid
           {{ field.label }} <span v-if="field.required" class="text-red-500">*</span>
         </label>
         <input
-          type="email"
+          type="text"
+          inputmode="email"
           :value="modelValue[field.id]"
           :readonly="isEmailPrefillLocked(field)"
           @input="handleEmailInput(field, $event.target.value)"
           class="w-full border border-gray-300 rounded-lg p-3 focus:ring-black focus:border-black transition"
           :class="isEmailPrefillLocked(field) ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : ''"
-          placeholder="name@company.com"
+          placeholder="name@company.com; another@company.com"
         />
+        <p class="text-xs text-gray-400 mt-1">
+          You can enter multiple addresses separated by semicolons or commas.
+        </p>
         <p v-if="field.validation?.autoFillUser" class="text-xs text-gray-400 mt-1">
           Auto-filled with your account email.
         </p>
@@ -493,7 +498,9 @@ const handleUserImageUpload = async (event, fieldId, rowIndex, colId, fieldValid
             Fixed email for this form.
           </span>
           <span v-else>
-            Pre-filled from {{ field.emailPrefillConfig.sourceTable }}.{{ field.emailPrefillConfig.sourceColumn }}.
+            Pre-filled from {{ field.emailPrefillConfig.sourceTable }}.{{
+              field.emailPrefillConfig.sourceColumn
+            }}.
           </span>
           <span v-if="isEmailPrefillLocked(field)">The respondent cannot edit this value.</span>
           <span v-else>The respondent can edit this value.</span>

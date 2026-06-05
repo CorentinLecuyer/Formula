@@ -59,6 +59,118 @@ const getBase64FromUrl = async (url) => {
   }
 }
 
+const EMAIL_REGEX = /^[^\s@;,<>]+@[^\s@;,<>]+\.[^\s@;,<>]+$/i
+
+const splitEmailList = (value) =>
+  String(value || '')
+    .split(/[;,\n]+/)
+    .map((email) => email.trim())
+    .filter(Boolean)
+
+const isValidEmailAddress = (email) => EMAIL_REGEX.test(String(email || '').trim())
+
+const getValidEmailsFromValue = (value) =>
+  splitEmailList(value).filter((email) => isValidEmailAddress(email))
+
+const getInvalidEmailsFromValue = (value) =>
+  splitEmailList(value).filter((email) => !isValidEmailAddress(email))
+
+const addEmailsFromValue = (value, recipientSet) => {
+  if (value === null || value === undefined) return
+
+  if (Array.isArray(value)) {
+    value.forEach((entry) => addEmailsFromValue(entry, recipientSet))
+    return
+  }
+
+  if (typeof value === 'object') {
+    Object.values(value).forEach((entry) => addEmailsFromValue(entry, recipientSet))
+    return
+  }
+
+  getValidEmailsFromValue(value).forEach((email) => {
+    recipientSet.add(email.toLowerCase())
+  })
+}
+
+const formatDisplayValue = (value) => {
+  if (value === null || value === undefined || value === '') return '-'
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => formatDisplayValue(entry)).join(', ')
+  }
+
+  if (typeof value === 'object') {
+    if ('parent' in value || 'child' in value) {
+      return [value.parent, value.child].filter(Boolean).join(' / ') || '-'
+    }
+
+    if (value.name) return value.name
+    if (value.t1) return value.t1
+    if (value.value) return value.value
+
+    return JSON.stringify(value)
+  }
+
+  return String(value)
+}
+
+const addMavenFieldsToPdfRows = (field, rows) => {
+  const isManualMaven =
+    formData.value[`${field.id}_is_manual`] === true &&
+    formData.value[`${field.id}_manual_mode`] === 'maven_account'
+
+  if (!isManualMaven) return
+
+  const mavenData = formData.value[`${field.id}_maven_account`] || {}
+  const mavenFields = Array.isArray(field.mavenAccountFields) ? field.mavenAccountFields : []
+
+  mavenFields.forEach((mavenField) => {
+    rows.push([
+      `${field.label} - Maven - ${mavenField.label || mavenField.key}`,
+      formatDisplayValue(mavenData[mavenField.key]),
+    ])
+  })
+}
+
+const collectEmailRecipients = async () => {
+  const recipientSet = new Set()
+  let t1Email = null
+  let t1Name = null
+
+  // Main rule: send to every e-mail address present in the submission payload.
+  // This includes normal email fields, fixed email fields, dynamic prefilled emails,
+  // and any future nested field that contains an email address.
+  addEmailsFromValue(formData.value, recipientSet)
+
+  // Keep the existing T1 convenience lookup as a fallback when a T1 field is used.
+  const t1Field = formSchema.value.find((field) => field.type === 't1_select')
+  if (t1Field) {
+    t1Name = formData.value[t1Field.id]
+
+    if (t1Name) {
+      const { data: t1Data, error: t1Err } = await supabase
+        .from('t1_users')
+        .select('email')
+        .eq('full_name', t1Name)
+        .maybeSingle()
+
+      if (!t1Err && t1Data?.email) {
+        t1Email = t1Data.email
+        addEmailsFromValue(t1Data.email, recipientSet)
+      } else if (t1Err) {
+        console.warn('Could not find T1 user email:', t1Name, t1Err)
+      }
+    }
+  }
+
+  return {
+    recipients: [...recipientSet],
+    t1Email,
+    t1Name,
+  }
+}
+
 // --- 1. GENERATE PDF (Compact Rows, Scaled Images) ---
 const generatePDFBase64 = async (t1Email, t1Name) => {
   const doc = new jsPDF()
@@ -94,11 +206,11 @@ const generatePDFBase64 = async (t1Email, t1Name) => {
     } else if (field.type === 'table') {
       customTables.push({ field, rows: val || [] })
     } else if (!field.is_partner) {
-      let displayVal = val
-      if (typeof val === 'object' && val !== null) {
-        displayVal = val.name || JSON.stringify(val)
+      generalFields.push([field.label, formatDisplayValue(val)])
+
+      if (field.type === 'poc_select') {
+        addMavenFieldsToPdfRows(field, generalFields)
       }
-      generalFields.push([field.label, displayVal || '-'])
     }
   }
 
@@ -269,6 +381,45 @@ const fetchForm = async () => {
 // ---------------------------------------------------------
 // 🛡️ UPDATED VALIDATION LOGIC
 // ---------------------------------------------------------
+const isEmptyValue = (value) =>
+  value === null ||
+  value === undefined ||
+  value === '' ||
+  (Array.isArray(value) && value.length === 0) ||
+  (typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 0)
+
+const getDisplayValue = (value) => {
+  if (value === null || value === undefined || value === '') return '-'
+
+  if (Array.isArray(value)) {
+    return value.map(getDisplayValue).join(', ')
+  }
+
+  if (typeof value === 'object') {
+    if ('parent' in value || 'child' in value) {
+      return [value.parent, value.child].filter(Boolean).join(' / ') || '-'
+    }
+
+    if ('name' in value) return value.name || '-'
+    if ('t1' in value) return value.t1 || '-'
+
+    return Object.entries(value)
+      .map(([key, val]) => `${key}: ${getDisplayValue(val)}`)
+      .join(' | ')
+  }
+
+  return String(value)
+}
+
+const getMavenAccountFieldValue = (mavenData, mavenField) => {
+  if (!mavenData || !mavenField) return ''
+
+  const value = mavenData[mavenField.key]
+  if (value === null || value === undefined) return ''
+
+  return getDisplayValue(value)
+}
+
 const validateForm = () => {
   validationErrors.value = []
   formSchema.value.forEach((field) => {
@@ -276,18 +427,49 @@ const validateForm = () => {
     const rules = field.validation || {}
 
     if (field.required && !field.is_partner) {
-      const isEmpty =
-        val === null || val === undefined || val === '' || (Array.isArray(val) && val.length === 0)
-      if (isEmpty) {
+      if (isEmptyValue(val)) {
         validationErrors.value.push(`Field "${field.label}" is required.`)
         return
       }
     }
+
+    if (field.type === 'poc_select' && formData.value[`${field.id}_is_manual`]) {
+      const manualMode = formData.value[`${field.id}_manual_mode`] || field.manualPocMode
+
+      if (manualMode === 'maven_account') {
+        const mavenData = formData.value[`${field.id}_maven_account`] || {}
+        const missingMavenFields = (field.mavenAccountFields || []).filter((mavenField) => {
+          if (!mavenField.required) return false
+
+          const value = mavenData[mavenField.key]
+
+          if (mavenField.type === 'dependent_select') {
+            return !value?.parent || !value?.child
+          }
+
+          return isEmptyValue(value)
+        })
+
+        missingMavenFields.forEach((mavenField) => {
+          validationErrors.value.push(`Field "${mavenField.label}" is required.`)
+        })
+      }
+    }
+
     if (!val && val !== 0) return
     if (field.type === 'email') {
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-      if (!emailRegex.test(val))
-        validationErrors.value.push(`"${field.label}": Invalid email format.`)
+      const emails = splitEmailList(val)
+      const invalidEmails = getInvalidEmailsFromValue(val)
+
+      if (field.required && emails.length === 0) {
+        validationErrors.value.push(`"${field.label}": at least one email address is required.`)
+      }
+
+      if (invalidEmails.length > 0) {
+        validationErrors.value.push(
+          `"${field.label}": invalid email address(es): ${invalidEmails.join(', ')}.`,
+        )
+      }
     }
     // Simple text validation
     if (field.type === 'text') {
@@ -390,6 +572,34 @@ const validateForm = () => {
   return validationErrors.value.length === 0
 }
 
+const collectEmailsDeep = (value) => {
+  const emails = []
+
+  if (value === null || value === undefined) {
+    return emails
+  }
+
+  if (typeof value === 'string') {
+    emails.push(...getValidEmailsFromValue(value))
+    return emails
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((item) => {
+      emails.push(...collectEmailsDeep(item))
+    })
+    return emails
+  }
+
+  if (typeof value === 'object') {
+    Object.values(value).forEach((item) => {
+      emails.push(...collectEmailsDeep(item))
+    })
+  }
+
+  return emails
+}
+
 const submitForm = async () => {
   if (!validateForm()) {
     window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -419,61 +629,56 @@ const submitForm = async () => {
   }
 
   // B. Email Logic
-  const config = formEmailConfig.value
-  let recipients = []
-  let t1Email = null
-  let t1Name = null
+  const config = formEmailConfig.value || {}
+  const emailEnabled = config.enabled !== false
 
-  // 1. Gather Standard Email Fields
-  formSchema.value.forEach((field) => {
-    if (field.type === 'email' && formData.value[field.id]) {
-      recipients.push(formData.value[field.id])
-    }
-  })
+  if (emailEnabled) {
+    const { recipients, t1Email, t1Name } = await collectEmailRecipients()
 
-  // 2. FETCH EMAILS FROM 't1_users'
-  const t1Field = formSchema.value.find((f) => f.type === 't1_select')
-  if (t1Field) {
-    t1Name = formData.value[t1Field.id] // The full_name selected
+    if (recipients.length === 0) {
+      console.warn(
+        'Submission saved, but no email recipient was found in formData:',
+        formData.value,
+      )
+      alert('Submission saved, but no email was sent because no recipient email address was found.')
+    } else {
+      try {
+        const pdfBase64 = await generatePDFBase64(t1Email, t1Name)
 
-    if (t1Name) {
-      // 🟢 FIX: Query 't1_users' and match 'full_name'
-      const { data: t1Data, error: t1Err } = await supabase
-        .from('t1_users') // Correct Table Name
-        .select('email') // Only select columns that exist
-        .eq('full_name', t1Name) // Match full_name
-        .single()
+        const { data: emailResult, error: emailError } = await supabase.functions.invoke(
+          'send-email',
+          {
+            body: {
+              to: recipients,
+              subject: config.subject || `Bon de commande: ${formTitle.value}`,
+              text:
+                config.body ||
+                'Bonjour,\n\nVeuillez trouver en pièce jointe le bon de commande généré depuis le formulaire.\n\nMerci.',
+              pdfBase64,
+              filename: `${formTitle.value.replace(/[^a-z0-9]/gi, '_')}.pdf`,
+            },
+          },
+        )
 
-      if (!t1Err && t1Data) {
-        if (t1Data.email) {
-          t1Email = t1Data.email
-          recipients.push(t1Data.email)
+        if (emailError) {
+          throw new Error(emailError.message || JSON.stringify(emailError))
         }
-      } else {
-        console.warn('Could not find T1 user in database:', t1Name, t1Err)
+
+        if (emailResult?.error) {
+          throw new Error(emailResult.error)
+        }
+
+        console.info('Bon de commande email sent:', {
+          recipients,
+          result: emailResult,
+        })
+      } catch (emailErr) {
+        console.error('Email failed:', emailErr)
+        alert(
+          'Submission saved, but the bon de commande email could not be sent: ' +
+            (emailErr.message || 'Unknown email error'),
+        )
       }
-    }
-  }
-
-  // Remove duplicates
-  recipients = [...new Set(recipients)]
-
-  if (recipients.length > 0 && config?.enabled) {
-    try {
-      // 🟢 FIX: Pass t1Email and t1Name as arguments
-      const pdfBase64 = await generatePDFBase64(t1Email, t1Name)
-
-      await supabase.functions.invoke('send-email', {
-        body: {
-          to: recipients.join(','),
-          subject: config.subject || `New Submission: ${formTitle.value}`,
-          text: config.body || 'Please find attached the submission PDF.',
-          pdfBase64: pdfBase64,
-          filename: `${formTitle.value.replace(/[^a-z0-9]/gi, '_')}.pdf`,
-        },
-      })
-    } catch (emailErr) {
-      console.error('Email failed:', emailErr)
     }
   }
 

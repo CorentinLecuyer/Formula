@@ -42,30 +42,48 @@ const defaultEmailPrefillConfig = () => ({
   allowEdit: true,
 })
 
+
+const EMAIL_REGEX = /^[^\s@;,<>]+@[^\s@;,<>]+\.[^\s@;,<>]+$/i
+
+const splitEmailList = (value) =>
+  String(value || '')
+    .split(/[;,\n]+/)
+    .map((email) => email.trim())
+    .filter(Boolean)
+
+const getInvalidEmailsFromValue = (value) =>
+  splitEmailList(value).filter((email) => !EMAIL_REGEX.test(email))
+  
+const getNormalizedEmailPrefillConfig = (field) => {
+  const rawConfig = field?.emailPrefillConfig || {}
+
+  const config = {
+    ...defaultEmailPrefillConfig(),
+    ...rawConfig,
+  }
+
+  if (!config.sourceSchema) {
+    config.sourceSchema = 'public'
+  }
+
+  if (!['single_row', 'lookup', 'fixed'].includes(config.strategy)) {
+    config.strategy = 'single_row'
+  }
+
+  if (config.strategy !== 'lookup') {
+    config.lookupFieldId = ''
+    config.lookupColumn = ''
+  }
+
+  config.fixedEmailAddress = String(config.fixedEmailAddress || '')
+
+  return config
+}
+
 const normalizeEmailPrefillConfig = (field) => {
   if (!field || field.type !== 'email') return
 
-  field.emailPrefillConfig = {
-    ...defaultEmailPrefillConfig(),
-    ...(field.emailPrefillConfig || {}),
-  }
-
-  if (!field.emailPrefillConfig.sourceSchema) {
-    field.emailPrefillConfig.sourceSchema = 'public'
-  }
-
-  if (!['single_row', 'lookup', 'fixed'].includes(field.emailPrefillConfig.strategy)) {
-    field.emailPrefillConfig.strategy = 'single_row'
-  }
-
-  if (field.emailPrefillConfig.strategy !== 'lookup') {
-    field.emailPrefillConfig.lookupFieldId = ''
-    field.emailPrefillConfig.lookupColumn = ''
-  }
-
-  field.emailPrefillConfig.fixedEmailAddress = String(
-    field.emailPrefillConfig.fixedEmailAddress || '',
-  )
+  field.emailPrefillConfig = getNormalizedEmailPrefillConfig(field)
 }
 
 const DEFAULT_MAVEN_SEGMENT_MAPPING = [
@@ -118,18 +136,21 @@ const createDefaultMavenAccountFields = () => [
   },
 ]
 
-const normalizeMavenAccountField = (mavenField, index = 0) => {
+const normalizeMavenAccountField = (mavenField = {}, index = 0) => {
+  const safeField =
+    mavenField && typeof mavenField === 'object' && !Array.isArray(mavenField) ? mavenField : {}
+
   const normalized = {
-    key: mavenField.key || `field_${index + 1}`,
-    label: mavenField.label || `Field ${index + 1}`,
-    type: mavenField.type || 'text',
-    required: !!mavenField.required,
+    key: safeField.key || `field_${index + 1}`,
+    label: safeField.label || `Field ${index + 1}`,
+    type: safeField.type || 'text',
+    required: !!safeField.required,
   }
 
   if (normalized.type === 'dependent_select') {
-    normalized.parentLabel = mavenField.parentLabel || 'Segment'
-    normalized.childLabel = mavenField.childLabel || 'Sous-Segment'
-    normalized.mappingText = mavenField.mappingText || DEFAULT_MAVEN_SEGMENT_MAPPING
+    normalized.parentLabel = safeField.parentLabel || 'Segment'
+    normalized.childLabel = safeField.childLabel || 'Sous-Segment'
+    normalized.mappingText = safeField.mappingText || DEFAULT_MAVEN_SEGMENT_MAPPING
     normalized.mappingData = parseDependentMappingText(normalized.mappingText)
   }
 
@@ -199,18 +220,32 @@ const normalizeFieldForBuilder = (field) => {
 
   normalizePocManualConfig(field)
 
-  if (field.type === 'table' && Array.isArray(field.columns)) {
-    field.columns.forEach((col) => {
-      if (!col.validation) {
-        col.validation =
-          col.type === 'number'
-            ? { min: null, max: null }
-            : { minLength: null, maxLength: null, min: null, max: null }
-      }
+  if (field.type === 'table') {
+    if (!Array.isArray(field.columns)) {
+      field.columns = []
+    }
 
-      if (col.required === undefined) col.required = false
-      if (col.locked === undefined) col.locked = false
-    })
+    field.columns = field.columns
+      .filter((col) => col && typeof col === 'object')
+      .map((col) => {
+        const normalizedCol = { ...col }
+
+        if (!normalizedCol.validation) {
+          normalizedCol.validation =
+            normalizedCol.type === 'number'
+              ? { min: null, max: null }
+              : { minLength: null, maxLength: null, min: null, max: null }
+        }
+
+        if (normalizedCol.required === undefined) normalizedCol.required = false
+        if (normalizedCol.locked === undefined) normalizedCol.locked = false
+
+        return normalizedCol
+      })
+
+    if (!Array.isArray(field.rows)) {
+      field.rows = []
+    }
   }
 }
 
@@ -269,7 +304,9 @@ onMounted(async () => {
   const { data } = await supabase.auth.getUser()
   currentUser.value = data.user
 
-  await loadEmailPrefillColumns()
+  // This is only needed for the email field dropdown.
+  // It should not block the form builder from loading.
+  loadEmailPrefillColumns()
 
   if (route.params.slug) {
     isEditing.value = true
@@ -280,32 +317,75 @@ onMounted(async () => {
 const loadFormForEdit = async (slug) => {
   isLoading.value = true
 
-  const { data, error } = await supabase.from('forms').select('*').eq('slug', slug).single()
+  try {
+    const normalizedSlug = String(slug || '').trim()
 
-  if (error) {
-    toast.error('Error loading form: ' + error.message)
-    isLoading.value = false
+    const { data, error } = await supabase
+      .from('forms')
+      .select('*')
+      .ilike('slug', normalizedSlug)
+      .maybeSingle()
+
+    if (error) {
+      throw error
+    }
+
+    if (!data) {
+      toast.error(`Form not found for slug: ${normalizedSlug}`)
+      router.push('/')
+      return
+    }
+
+    formId.value = data.id
+    title.value = data.title || ''
+    description.value = data.description || ''
+    status.value = data.status || 'draft'
+    infoBlocks.value = data.info_blocks || []
+
+    if (data.email_config) {
+      emailConfig.value = data.email_config
+    } else {
+      emailConfig.value = {
+        ...emailConfig.value,
+        subject: `Copy of your submission: ${data.title || 'Form'}`,
+      }
+    }
+
+    const rawSchema = Array.isArray(data.schema) ? data.schema : []
+
+    const normalizedSchema = rawSchema
+      .filter((field) => field && typeof field === 'object')
+      .map((field) => {
+        const clonedField = { ...field }
+
+        try {
+          normalizeFieldForBuilder(clonedField)
+        } catch (normalizationError) {
+          console.warn('Could not normalize field:', clonedField, normalizationError)
+        }
+
+        return clonedField
+      })
+
+    fields.value = normalizedSchema.filter((field) => !field.is_partner)
+
+    fields.value
+      .filter(
+        (field) =>
+          field.type === 'email' &&
+          field.emailPrefillConfig?.enabled &&
+          field.emailPrefillConfig?.strategy === 'lookup',
+      )
+      .forEach((field) => {
+        loadEmailPrefillLookupColumns(field)
+      })
+  } catch (error) {
+    console.error('Error loading form for edit:', error)
+    toast.error('Error loading form: ' + (error.message || 'Unknown error'))
     router.push('/')
-    return
+  } finally {
+    isLoading.value = false
   }
-
-  formId.value = data.id
-  title.value = data.title
-  description.value = data.description || ''
-  status.value = data.status || 'draft'
-  infoBlocks.value = data.info_blocks || []
-
-  if (data.email_config) {
-    emailConfig.value = data.email_config
-  } else {
-    emailConfig.value.subject = `Copy of your submission: ${data.title}`
-  }
-
-  const rawSchema = data.schema || []
-  rawSchema.forEach(normalizeFieldForBuilder)
-
-  fields.value = rawSchema.filter((field) => !field.is_partner)
-  isLoading.value = false
 }
 
 // --- HELPER FUNCTIONS ---
@@ -471,14 +551,14 @@ const formatEmailPrefillColumnValue = (column) =>
   })
 
 const getSelectedEmailPrefillColumnValue = (field) => {
-  normalizeEmailPrefillConfig(field)
+  const config = getNormalizedEmailPrefillConfig(field)
 
-  if (!field.emailPrefillConfig.sourceTable || !field.emailPrefillConfig.sourceColumn) return ''
+  if (!config.sourceTable || !config.sourceColumn) return ''
 
   return createEmailColumnSelectValue({
-    schema: field.emailPrefillConfig.sourceSchema || 'public',
-    table: field.emailPrefillConfig.sourceTable,
-    column: field.emailPrefillConfig.sourceColumn,
+    schema: config.sourceSchema || 'public',
+    table: config.sourceTable,
+    column: config.sourceColumn,
   })
 }
 
@@ -527,31 +607,25 @@ const loadEmailPrefillLookupColumns = async (field) => {
 }
 
 const getEmailPrefillLookupColumns = (field) => {
-  normalizeEmailPrefillConfig(field)
+  const config = getNormalizedEmailPrefillConfig(field)
 
-  const cacheKey = getTableCacheKey(
-    field.emailPrefillConfig.sourceSchema || 'public',
-    field.emailPrefillConfig.sourceTable,
-  )
+  const cacheKey = getTableCacheKey(config.sourceSchema || 'public', config.sourceTable)
 
   return emailPrefillLookupColumnsByTable.value[cacheKey] || []
 }
 
 const isEmailPrefillLookupColumnsLoading = (field) => {
-  normalizeEmailPrefillConfig(field)
+  const config = getNormalizedEmailPrefillConfig(field)
 
-  const cacheKey = getTableCacheKey(
-    field.emailPrefillConfig.sourceSchema || 'public',
-    field.emailPrefillConfig.sourceTable,
-  )
+  const cacheKey = getTableCacheKey(config.sourceSchema || 'public', config.sourceTable)
 
   return !!emailPrefillLookupColumnsLoadingByTable.value[cacheKey]
 }
 
 const getEmailPrefillLookupFields = (field) => {
-  normalizeEmailPrefillConfig(field)
+  const config = getNormalizedEmailPrefillConfig(field)
 
-  if (field.emailPrefillConfig.strategy !== 'lookup') return []
+  if (config.strategy !== 'lookup') return []
 
   return fields.value.filter((candidate) => {
     if (!candidate || candidate.id === field.id) return false
@@ -644,37 +718,35 @@ const setEmailPrefillStrategy = async (field, strategy) => {
 }
 
 const getEmailPrefillSourceDescription = (field) => {
-  normalizeEmailPrefillConfig(field)
+  const config = getNormalizedEmailPrefillConfig(field)
 
-  if (field.emailPrefillConfig.strategy === 'fixed') {
-    return field.emailPrefillConfig.fixedEmailAddress
-      ? `This email field will always use ${field.emailPrefillConfig.fixedEmailAddress} for this form.`
+  if (config.strategy === 'fixed') {
+    return config.fixedEmailAddress
+      ? `This email field will always use ${config.fixedEmailAddress} for this form.`
       : 'Enter the fixed email address to use for this form.'
   }
 
-  if (!field.emailPrefillConfig.sourceTable || !field.emailPrefillConfig.sourceColumn) {
+  if (!config.sourceTable || !config.sourceColumn) {
     return 'Choose a source email column first.'
   }
 
-  const sourceLabel = `${field.emailPrefillConfig.sourceTable}.${field.emailPrefillConfig.sourceColumn}`
+  const sourceLabel = `${config.sourceTable}.${config.sourceColumn}`
 
-  if (field.emailPrefillConfig.strategy === 'single_row') {
+  if (config.strategy === 'single_row') {
     return `The email will be fetched from the first non-empty row of ${sourceLabel}.`
   }
 
-  const lookupField = fields.value.find(
-    (candidate) => candidate.id === field.emailPrefillConfig.lookupFieldId,
-  )
+  const lookupField = fields.value.find((candidate) => candidate.id === config.lookupFieldId)
 
   if (!lookupField) {
     return 'Choose which form field should be used to find the matching row.'
   }
 
-  if (!field.emailPrefillConfig.lookupColumn) {
-    return `Choose which column in ${field.emailPrefillConfig.sourceTable} should match “${lookupField.label || lookupField.type}”.`
+  if (!config.lookupColumn) {
+    return `Choose which column in ${config.sourceTable} should match “${lookupField.label || lookupField.type}”.`
   }
 
-  return `The email will be fetched from ${sourceLabel} where ${field.emailPrefillConfig.lookupColumn} matches “${lookupField.label || lookupField.type}”.`
+  return `The email will be fetched from ${sourceLabel} where ${config.lookupColumn} matches “${lookupField.label || lookupField.type}”.`
 }
 
 // --- PREMADE LIST FILTER LOGIC ---
@@ -691,8 +763,11 @@ const setSourceFilterMode = (field, mode) => {
 }
 
 const isAllowedOptionSelected = (field, option) => {
-  ensureSourceFilter(field)
-  return field.sourceFilter.allowedOptions.some((item) => item.value === option.value)
+  const allowedOptions = Array.isArray(field?.sourceFilter?.allowedOptions)
+    ? field.sourceFilter.allowedOptions
+    : []
+
+  return allowedOptions.some((item) => item.value === option.value)
 }
 
 const addAllowedOption = (field, option) => {
@@ -989,8 +1064,8 @@ const handleTableCellImageUpload = async (event, fieldIndex, rowIndex, colId) =>
   }
 }
 
-
-const isValidEmailAddress = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim())
+const isValidEmailList = (value) =>
+  splitEmailList(value).length > 0 && getInvalidEmailsFromValue(value).length === 0
 
 // --- SAVE ---
 const saveForm = async () => {
@@ -1017,13 +1092,20 @@ const saveForm = async () => {
     return (
       field.emailPrefillConfig.enabled &&
       field.emailPrefillConfig.strategy === 'fixed' &&
-      !isValidEmailAddress(field.emailPrefillConfig.fixedEmailAddress)
+      !isValidEmailList(field.emailPrefillConfig.fixedEmailAddress)
     )
   })
 
   if (invalidFixedEmailField) {
+    const invalidEmails = getInvalidEmailsFromValue(
+      invalidFixedEmailField.emailPrefillConfig.fixedEmailAddress,
+    )
+    const suffix = invalidEmails.length ? ` Invalid: ${invalidEmails.join(', ')}` : ''
+
     return toast.warning(
-      `Please enter a valid fixed email address for "${invalidFixedEmailField.label || 'Email'}".`,
+      `Please enter at least one valid fixed email address for "${
+        invalidFixedEmailField.label || 'Email'
+      }". You can separate multiple addresses with semicolons or commas.${suffix}`,
     )
   }
 
@@ -1308,7 +1390,9 @@ const deleteForm = async () => {
               </div>
 
               <div class="col-span-12 pt-2 border-t border-stone-200">
-                <label class="text-xs text-zinc-500 uppercase font-semibold tracking-wide mb-2 block">
+                <label
+                  class="text-xs text-zinc-500 uppercase font-semibold tracking-wide mb-2 block"
+                >
                   Block Image (Optional)
                 </label>
 
@@ -1576,7 +1660,9 @@ const deleteForm = async () => {
                 </div>
 
                 <div class="pt-2 border-t border-stone-200">
-                  <label class="text-xs text-zinc-500 uppercase font-semibold tracking-wide mb-2 block">
+                  <label
+                    class="text-xs text-zinc-500 uppercase font-semibold tracking-wide mb-2 block"
+                  >
                     Block Image (Optional)
                   </label>
 
@@ -1928,7 +2014,9 @@ const deleteForm = async () => {
                     >
                       <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                         <div>
-                          <label class="text-xs text-zinc-700 uppercase font-semibold tracking-wide">
+                          <label
+                            class="text-xs text-zinc-700 uppercase font-semibold tracking-wide"
+                          >
                             1st Dropdown Label
                           </label>
                           <input
@@ -1940,7 +2028,9 @@ const deleteForm = async () => {
                         </div>
 
                         <div>
-                          <label class="text-xs text-zinc-700 uppercase font-semibold tracking-wide">
+                          <label
+                            class="text-xs text-zinc-700 uppercase font-semibold tracking-wide"
+                          >
                             2nd Dropdown Label
                           </label>
                           <input
@@ -2100,7 +2190,8 @@ const deleteForm = async () => {
                         />
                         <span class="font-semibold text-zinc-950">Match with another field</span>
                         <p class="text-xs text-zinc-500 mt-1">
-                          Best when the email depends on a selected Depot, POC, T1, or another form answer.
+                          Best when the email depends on a selected Depot, POC, T1, or another form
+                          answer.
                         </p>
                       </label>
 
@@ -2136,12 +2227,14 @@ const deleteForm = async () => {
                     </label>
                     <input
                       v-model.trim="field.emailPrefillConfig.fixedEmailAddress"
-                      type="email"
-                      placeholder="manager@example.com"
+                      type="text"
+                      inputmode="email"
+                      placeholder="manager@example.com; another@example.com"
                       class="w-full border border-stone-200 rounded p-2 text-sm bg-white focus:ring-zinc-900 focus:border-zinc-900"
                     />
                     <p class="text-[11px] text-zinc-400">
-                      This address is stored in this form schema only. It does not need to exist in any Supabase table.
+                      This address is stored in this form schema only. You can add multiple
+                      addresses separated by semicolons or commas.
                     </p>
                   </div>
 
@@ -2167,7 +2260,8 @@ const deleteForm = async () => {
                         </option>
                       </select>
                       <p class="text-[11px] text-zinc-400 mt-1">
-                        Example: choose your Depot field if the source table should be matched by depot ID.
+                        Example: choose your Depot field if the source table should be matched by
+                        depot ID.
                       </p>
                     </div>
 
@@ -2189,7 +2283,10 @@ const deleteForm = async () => {
                         </option>
                       </select>
 
-                      <p v-if="isEmailPrefillLookupColumnsLoading(field)" class="text-[11px] text-zinc-500 mt-1">
+                      <p
+                        v-if="isEmailPrefillLookupColumnsLoading(field)"
+                        class="text-[11px] text-zinc-500 mt-1"
+                      >
                         Loading lookup columns...
                       </p>
                       <p v-else class="text-[11px] text-zinc-400 mt-1">
